@@ -117,6 +117,69 @@ function AppContent() {
     setView("notes");
   }, []);
 
+  const menuEnabledActions = useMemo(() => {
+    const hasNotesFolder = Boolean(notesFolder);
+    const isNotesView = view === "notes";
+    const hasSelectedNote = Boolean(selectedNoteId);
+    const hasCurrentNote = Boolean(currentNote);
+    const hasEditorActions = isNotesView && hasCurrentNote;
+    const canZoomIn = interfaceZoom < 1.5;
+    const canZoomOut = interfaceZoom > 0.7;
+    const canZoomReset = Math.abs(interfaceZoom - 1) > 0.001;
+
+    return {
+      "check-for-updates": true,
+      "open-settings": hasNotesFolder,
+      "new-note": hasNotesFolder,
+      "new-folder": hasNotesFolder,
+      "duplicate-note": hasSelectedNote,
+      "delete-note": hasSelectedNote,
+      "reload-note": hasSelectedNote,
+      "open-notes-folder": hasNotesFolder,
+      "search-notes": hasNotesFolder,
+      "command-palette": hasNotesFolder,
+      "toggle-sidebar": hasNotesFolder && isNotesView,
+      "zoom-in": canZoomIn,
+      "zoom-out": canZoomOut,
+      "zoom-reset": canZoomReset,
+      "settings-tab-general": hasNotesFolder,
+      "settings-tab-editor": hasNotesFolder,
+      "settings-tab-shortcuts": hasNotesFolder,
+      "settings-tab-about": hasNotesFolder,
+      "find-in-note": hasEditorActions,
+      "add-link": hasEditorActions,
+      "toggle-focus-mode": hasSelectedNote && isNotesView,
+      "toggle-source-mode": hasEditorActions,
+      "open-copy-export": hasEditorActions,
+      "copy-markdown": hasEditorActions,
+      "copy-plain-text": hasEditorActions,
+      "copy-html": hasEditorActions,
+      "print-pdf": hasEditorActions,
+      "export-markdown": hasEditorActions,
+    };
+  }, [currentNote?.id, interfaceZoom, notesFolder, selectedNoteId, view]);
+
+  useEffect(() => {
+    invoke("update_menu_state", {
+      menuState: { enabledActions: menuEnabledActions },
+    }).catch((error) => {
+      console.error("Failed to update menu state:", error);
+    });
+  }, [menuEnabledActions]);
+
+  useEffect(() => {
+    const handleWindowFocus = () => {
+      invoke("update_menu_state", {
+        menuState: { enabledActions: menuEnabledActions },
+      }).catch((error) => {
+        console.error("Failed to update menu state:", error);
+      });
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+    return () => window.removeEventListener("focus", handleWindowFocus);
+  }, [menuEnabledActions]);
+
   // Handle menu actions from native macOS menu
   useEffect(() => {
     let cancelled = false;

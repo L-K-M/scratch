@@ -1,6 +1,7 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { Editor, type PreviewModeData } from "../editor/Editor";
 import * as filesService from "../../services/files";
@@ -17,6 +18,44 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
   const [reloadVersion, setReloadVersion] = useState(0);
   const [focusMode, setFocusMode] = useState(false);
   const recentlySavedRef = useRef(false);
+
+  const menuEnabledActions = useMemo(() => {
+    const hasCurrentNote = content !== null;
+    return {
+      "reload-note": true,
+      "find-in-note": hasCurrentNote,
+      "add-link": hasCurrentNote,
+      "toggle-focus-mode": hasCurrentNote,
+      "toggle-source-mode": hasCurrentNote,
+      "open-copy-export": hasCurrentNote,
+      "copy-markdown": hasCurrentNote,
+      "copy-plain-text": hasCurrentNote,
+      "copy-html": hasCurrentNote,
+      "print-pdf": hasCurrentNote,
+      "export-markdown": hasCurrentNote,
+    };
+  }, [content]);
+
+  useEffect(() => {
+    invoke("update_menu_state", {
+      menuState: { enabledActions: menuEnabledActions },
+    }).catch((error) => {
+      console.error("Failed to update menu state:", error);
+    });
+  }, [menuEnabledActions]);
+
+  useEffect(() => {
+    const handleWindowFocus = () => {
+      invoke("update_menu_state", {
+        menuState: { enabledActions: menuEnabledActions },
+      }).catch((error) => {
+        console.error("Failed to update menu state:", error);
+      });
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+    return () => window.removeEventListener("focus", handleWindowFocus);
+  }, [menuEnabledActions]);
 
   // Load file on mount
   useEffect(() => {
