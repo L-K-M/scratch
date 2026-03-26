@@ -14,6 +14,7 @@ interface ClipboardCapabilities {
   canCut: boolean;
   canCopy: boolean;
   canPaste: boolean;
+  canSelectAll: boolean;
 }
 
 export function PreviewApp({ filePath }: PreviewAppProps) {
@@ -28,6 +29,7 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
       canCut: false,
       canCopy: false,
       canPaste: false,
+      canSelectAll: false,
     });
   const recentlySavedRef = useRef(false);
 
@@ -49,9 +51,8 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
       activeElement.selectionEnd !== null &&
       activeElement.selectionEnd > activeElement.selectionStart;
 
-    const isInputEditable =
+    const isInputSelectable =
       isTextControl &&
-      !activeElement.readOnly &&
       !activeElement.disabled &&
       (activeElement instanceof HTMLTextAreaElement ||
         ![
@@ -67,6 +68,11 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
           "submit",
         ].includes(activeElement.type));
 
+    const isInputEditable =
+      isInputSelectable &&
+      !activeElement.readOnly &&
+      !activeElement.disabled;
+
     const htmlActive = activeElement as HTMLElement | null;
     const isContentEditableTarget = Boolean(
       htmlActive &&
@@ -79,8 +85,9 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
       (isContentEditableTarget && hasDocumentSelection);
     const canCopy = hasInputSelection || hasDocumentSelection;
     const canPaste = isInputEditable || isContentEditableTarget;
+    const canSelectAll = isInputSelectable || isContentEditableTarget;
 
-    return { canCut, canCopy, canPaste };
+    return { canCut, canCopy, canPaste, canSelectAll };
   }, []);
 
   useEffect(() => {
@@ -89,7 +96,8 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
       setClipboardCapabilities((prev) =>
         prev.canCut === next.canCut &&
         prev.canCopy === next.canCopy &&
-        prev.canPaste === next.canPaste
+        prev.canPaste === next.canPaste &&
+        prev.canSelectAll === next.canSelectAll
           ? prev
           : next,
       );
@@ -112,16 +120,19 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
     };
   }, [computeClipboardCapabilities]);
 
-  const runEditCommand = useCallback((command: "cut" | "copy" | "paste") => {
-    const activeElement = document.activeElement as HTMLElement | null;
-    activeElement?.focus();
+  const runEditCommand = useCallback(
+    (command: "cut" | "copy" | "paste" | "selectAll") => {
+      const activeElement = document.activeElement as HTMLElement | null;
+      activeElement?.focus();
 
-    try {
-      document.execCommand(command);
-    } catch (error) {
-      console.error(`Failed to run ${command}:`, error);
-    }
-  }, []);
+      try {
+        document.execCommand(command);
+      } catch (error) {
+        console.error(`Failed to run ${command}:`, error);
+      }
+    },
+    [],
+  );
 
   const menuEnabledActions = useMemo(() => {
     const hasCurrentNote = content !== null;
@@ -140,6 +151,7 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
       "edit-cut": clipboardCapabilities.canCut,
       "edit-copy": clipboardCapabilities.canCopy,
       "edit-paste": clipboardCapabilities.canPaste,
+      "edit-select-all": clipboardCapabilities.canSelectAll,
     };
   }, [clipboardCapabilities, content]);
 
@@ -301,6 +313,10 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
         }
         case "edit-paste": {
           runEditCommand("paste");
+          return;
+        }
+        case "edit-select-all": {
+          runEditCommand("selectAll");
           return;
         }
       }
