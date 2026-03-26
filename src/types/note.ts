@@ -28,6 +28,19 @@ export interface EditorFontSettings {
   lineHeight?: number; // default 1.6
 }
 
+export interface UiWindowPosition {
+  x: number;
+  y: number;
+  coordinateSpace: "logical";
+}
+
+export interface UiState {
+  schemaVersion?: number;
+  selectedNoteId?: string | null;
+  sidebarVisible?: boolean;
+  windowPosition?: UiWindowPosition;
+}
+
 // Per-folder settings (stored in .scratch/settings.json)
 export interface Settings {
   theme: ThemeSettings;
@@ -41,6 +54,8 @@ export interface Settings {
   defaultNoteName?: string;
   interfaceZoom?: number;
   ollamaModel?: string;
+  restoreUiState?: boolean;
+  uiState?: UiState;
 }
 
 export interface FolderNode {
