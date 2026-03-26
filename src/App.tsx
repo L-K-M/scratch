@@ -125,21 +125,25 @@ function AppContent() {
           setSidebarVisible(settings.uiState.sidebarVisible);
         }
 
+        const savedFocusMode = settings.uiState.focusMode === true;
+        let restoredSelectedNote = false;
+
         const savedNoteId = settings.uiState.selectedNoteId;
         if (typeof savedNoteId === "string") {
           const notesList = await notesService.listNotes();
           if (cancelled) return;
 
-          if (!notesList.some((note) => note.id === savedNoteId)) {
-            return;
-          }
-
-          try {
-            await selectNote(savedNoteId);
-          } catch (error) {
-            console.error("Failed to restore selected note:", error);
+          if (notesList.some((note) => note.id === savedNoteId)) {
+            try {
+              await selectNote(savedNoteId);
+              restoredSelectedNote = true;
+            } catch (error) {
+              console.error("Failed to restore selected note:", error);
+            }
           }
         }
+
+        setFocusMode(savedFocusMode && restoredSelectedNote);
       } catch (error) {
         console.error("Failed to restore UI state:", error);
         setRestoreUiStateEnabled(false);
@@ -177,7 +181,7 @@ function AppContent() {
     };
   }, []);
 
-  // Persist selected note + sidebar visibility when restoration is enabled
+  // Persist selected note + sidebar + focus mode when restoration is enabled
   useEffect(() => {
     if (!uiStateInitialized || !restoreUiStateEnabled || !notesFolder) return;
 
@@ -187,7 +191,7 @@ function AppContent() {
 
     persistUiStateTimeoutRef.current = window.setTimeout(() => {
       notesService
-        .updateUiState(selectedNoteId, sidebarVisible, notesFolder)
+        .updateUiState(selectedNoteId, sidebarVisible, focusMode, notesFolder)
         .catch((error) => {
           console.error("Failed to persist UI state:", error);
         });
@@ -205,6 +209,7 @@ function AppContent() {
     notesFolder,
     selectedNoteId,
     sidebarVisible,
+    focusMode,
   ]);
 
   const toggleSidebar = useCallback(() => {

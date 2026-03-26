@@ -75,11 +75,13 @@ export async function updateSettings(settings: Settings): Promise<void> {
 export async function updateUiState(
   selectedNoteId: string | null,
   sidebarVisible: boolean,
+  focusMode: boolean,
   expectedFolder: string,
 ): Promise<void> {
   return invoke("update_ui_state", {
     selectedNoteId,
     sidebarVisible,
+    focusMode,
     expectedFolder,
   });
 }

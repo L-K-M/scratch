@@ -130,6 +130,7 @@ pub struct UiStateSnapshot {
     pub schema_version: u8,
     pub selected_note_id: Option<String>,
     pub sidebar_visible: Option<bool>,
+    pub focus_mode: Option<bool>,
     pub window_position: Option<WindowPositionState>,
 }
 
@@ -139,6 +140,7 @@ impl Default for UiStateSnapshot {
             schema_version: default_ui_state_schema_version(),
             selected_note_id: None,
             sidebar_visible: None,
+            focus_mode: None,
             window_position: None,
         }
     }
@@ -1821,6 +1823,7 @@ fn update_settings(
 fn update_ui_state(
     selected_note_id: Option<String>,
     sidebar_visible: bool,
+    focus_mode: bool,
     expected_folder: String,
     app: AppHandle,
     state: State<AppState>,
@@ -1849,6 +1852,7 @@ fn update_ui_state(
         ui_state.schema_version = default_ui_state_schema_version();
         ui_state.selected_note_id = selected_note_id;
         ui_state.sidebar_visible = Some(sidebar_visible);
+        ui_state.focus_mode = Some(focus_mode);
         if let Some(position) = window_position {
             ui_state.window_position = Some(position);
         }

@@ -38,6 +38,7 @@ export interface UiState {
   schemaVersion?: number;
   selectedNoteId?: string | null;
   sidebarVisible?: boolean;
+  focusMode?: boolean;
   windowPosition?: UiWindowPosition;
 }
 
