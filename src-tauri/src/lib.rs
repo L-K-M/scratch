@@ -1670,6 +1670,7 @@ fn get_settings(state: State<AppState>) -> Settings {
 #[tauri::command]
 fn update_settings(
     new_settings: Settings,
+    app_handle: AppHandle,
     state: State<AppState>,
 ) -> Result<(), String> {
     let folder = {
@@ -1684,6 +1685,9 @@ fn update_settings(
 
     let settings = state.settings.read().expect("settings read lock");
     save_settings(&folder, &settings).map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "macos")]
+    apply_macos_menu_enabled_state(&app_handle, &state);
 
     Ok(())
 }
@@ -3600,25 +3604,56 @@ const MAIN_WINDOW_MENU_ACTIONS: &[&str] = &[
 #[cfg(target_os = "macos")]
 const FOCUSED_WINDOW_MENU_ACTIONS: &[&str] = &[
     "reload-note",
+    "copy-export-menu",
     "find-in-note",
     "add-link",
     "toggle-focus-mode",
     "toggle-source-mode",
-    "open-copy-export",
     "copy-markdown",
     "copy-plain-text",
     "copy-html",
     "print-pdf",
     "export-markdown",
+    "edit-cut",
+    "edit-copy",
+    "edit-paste",
 ];
 
 #[cfg(target_os = "macos")]
 fn set_menu_item_enabled<R: tauri::Runtime>(menu: &Menu<R>, id: &str, enabled: bool) {
-    if let Some(item) = menu.get(id) {
-        if let Some(menu_item) = item.as_menuitem() {
-            let _ = menu_item.set_enabled(enabled);
+    let Ok(items) = menu.items() else {
+        return;
+    };
+
+    let _ = set_nested_menu_item_enabled(&items, id, enabled);
+}
+
+#[cfg(target_os = "macos")]
+fn set_nested_menu_item_enabled<R: tauri::Runtime>(
+    items: &[tauri::menu::MenuItemKind<R>],
+    id: &str,
+    enabled: bool,
+) -> bool {
+    for item in items {
+        if item.id().as_ref() == id {
+            if let Some(menu_item) = item.as_menuitem() {
+                let _ = menu_item.set_enabled(enabled);
+            } else if let Some(submenu) = item.as_submenu() {
+                let _ = submenu.set_enabled(enabled);
+            }
+            return true;
+        }
+
+        if let Some(submenu) = item.as_submenu() {
+            if let Ok(sub_items) = submenu.items() {
+                if set_nested_menu_item_enabled(&sub_items, id, enabled) {
+                    return true;
+                }
+            }
         }
     }
+
+    false
 }
 
 #[cfg(target_os = "macos")]
@@ -3667,6 +3702,12 @@ fn apply_macos_menu_enabled_state<R: tauri::Runtime>(app: &AppHandle<R>, app_sta
         .map(|config| config.notes_folder.is_some())
         .unwrap_or(false);
 
+    let folders_enabled = app_state
+        .settings
+        .read()
+        .map(|settings| settings.folders_enabled.unwrap_or(false))
+        .unwrap_or(false);
+
     for action in MAIN_WINDOW_MENU_ACTIONS {
         let fallback = match *action {
             "check-for-updates" => true,
@@ -3684,7 +3725,12 @@ fn apply_macos_menu_enabled_state<R: tauri::Runtime>(app: &AppHandle<R>, app_sta
             | "settings-tab-about" => has_notes_folder,
             _ => false,
         };
-        let enabled = action_enabled(main_actions.as_ref(), action, fallback);
+        let mut enabled = action_enabled(main_actions.as_ref(), action, fallback);
+
+        if *action == "new-folder" {
+            enabled = enabled && folders_enabled;
+        }
+
         set_menu_item_enabled(&menu, action, enabled);
     }
 
@@ -3764,8 +3810,9 @@ fn build_macos_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu
         ],
     )?;
 
-    let copy_export_menu = Submenu::with_items(
+    let copy_export_menu = Submenu::with_id_and_items(
         app,
+        "copy-export-menu",
         "Copy & Export",
         true,
         &[
@@ -3822,13 +3869,6 @@ fn build_macos_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu
                 None::<&str>,
             )?,
             &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(
-                app,
-                "open-copy-export",
-                "Copy & Export...",
-                true,
-                Some("Cmd+Shift+C"),
-            )?,
             &copy_export_menu,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::close_window(app, None)?,
@@ -3843,9 +3883,9 @@ fn build_macos_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu
             &PredefinedMenuItem::undo(app, None)?,
             &PredefinedMenuItem::redo(app, None)?,
             &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::cut(app, None)?,
-            &PredefinedMenuItem::copy(app, None)?,
-            &PredefinedMenuItem::paste(app, None)?,
+            &MenuItem::with_id(app, "edit-cut", "Cut", true, Some("Cmd+X"))?,
+            &MenuItem::with_id(app, "edit-copy", "Copy", true, Some("Cmd+C"))?,
+            &MenuItem::with_id(app, "edit-paste", "Paste", true, Some("Cmd+V"))?,
             &PredefinedMenuItem::select_all(app, None)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "find-in-note", "Find in Note", true, Some("Cmd+F"))?,
