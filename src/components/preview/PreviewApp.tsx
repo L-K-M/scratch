@@ -10,6 +10,12 @@ interface PreviewAppProps {
   filePath: string;
 }
 
+interface ClipboardCapabilities {
+  canCut: boolean;
+  canCopy: boolean;
+  canPaste: boolean;
+}
+
 export function PreviewApp({ filePath }: PreviewAppProps) {
   const [content, setContent] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -17,24 +23,125 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
   const [hasExternalChanges, setHasExternalChanges] = useState(false);
   const [reloadVersion, setReloadVersion] = useState(0);
   const [focusMode, setFocusMode] = useState(false);
+  const [clipboardCapabilities, setClipboardCapabilities] =
+    useState<ClipboardCapabilities>({
+      canCut: false,
+      canCopy: false,
+      canPaste: false,
+    });
   const recentlySavedRef = useRef(false);
+
+  const computeClipboardCapabilities = useCallback((): ClipboardCapabilities => {
+    const activeElement = document.activeElement;
+    const selection = window.getSelection();
+
+    const hasDocumentSelection = Boolean(
+      selection && !selection.isCollapsed && selection.toString().length > 0,
+    );
+
+    const isTextControl =
+      activeElement instanceof HTMLInputElement ||
+      activeElement instanceof HTMLTextAreaElement;
+
+    const hasInputSelection =
+      isTextControl &&
+      activeElement.selectionStart !== null &&
+      activeElement.selectionEnd !== null &&
+      activeElement.selectionEnd > activeElement.selectionStart;
+
+    const isInputEditable =
+      isTextControl &&
+      !activeElement.readOnly &&
+      !activeElement.disabled &&
+      (activeElement instanceof HTMLTextAreaElement ||
+        ![
+          "button",
+          "checkbox",
+          "color",
+          "file",
+          "hidden",
+          "image",
+          "radio",
+          "range",
+          "reset",
+          "submit",
+        ].includes(activeElement.type));
+
+    const htmlActive = activeElement as HTMLElement | null;
+    const isContentEditableTarget = Boolean(
+      htmlActive &&
+        (htmlActive.isContentEditable ||
+          htmlActive.closest("[contenteditable='true'], .ProseMirror")),
+    );
+
+    const canCut =
+      (isInputEditable && hasInputSelection) ||
+      (isContentEditableTarget && hasDocumentSelection);
+    const canCopy = hasInputSelection || hasDocumentSelection;
+    const canPaste = isInputEditable || isContentEditableTarget;
+
+    return { canCut, canCopy, canPaste };
+  }, []);
+
+  useEffect(() => {
+    const updateClipboardCapabilities = () => {
+      const next = computeClipboardCapabilities();
+      setClipboardCapabilities((prev) =>
+        prev.canCut === next.canCut &&
+        prev.canCopy === next.canCopy &&
+        prev.canPaste === next.canPaste
+          ? prev
+          : next,
+      );
+    };
+
+    updateClipboardCapabilities();
+
+    document.addEventListener("selectionchange", updateClipboardCapabilities);
+    document.addEventListener("focusin", updateClipboardCapabilities);
+    document.addEventListener("keyup", updateClipboardCapabilities);
+    document.addEventListener("mouseup", updateClipboardCapabilities);
+    window.addEventListener("focus", updateClipboardCapabilities);
+
+    return () => {
+      document.removeEventListener("selectionchange", updateClipboardCapabilities);
+      document.removeEventListener("focusin", updateClipboardCapabilities);
+      document.removeEventListener("keyup", updateClipboardCapabilities);
+      document.removeEventListener("mouseup", updateClipboardCapabilities);
+      window.removeEventListener("focus", updateClipboardCapabilities);
+    };
+  }, [computeClipboardCapabilities]);
+
+  const runEditCommand = useCallback((command: "cut" | "copy" | "paste") => {
+    const activeElement = document.activeElement as HTMLElement | null;
+    activeElement?.focus();
+
+    try {
+      document.execCommand(command);
+    } catch (error) {
+      console.error(`Failed to run ${command}:`, error);
+    }
+  }, []);
 
   const menuEnabledActions = useMemo(() => {
     const hasCurrentNote = content !== null;
     return {
       "reload-note": true,
+      "copy-export-menu": hasCurrentNote,
       "find-in-note": hasCurrentNote,
       "add-link": hasCurrentNote,
       "toggle-focus-mode": hasCurrentNote,
       "toggle-source-mode": hasCurrentNote,
-      "open-copy-export": hasCurrentNote,
       "copy-markdown": hasCurrentNote,
       "copy-plain-text": hasCurrentNote,
       "copy-html": hasCurrentNote,
       "print-pdf": hasCurrentNote,
       "export-markdown": hasCurrentNote,
+      "edit-cut": clipboardCapabilities.canCut,
+      "edit-copy": clipboardCapabilities.canCopy,
+      "edit-paste": clipboardCapabilities.canPaste,
     };
-  }, [content]);
+  }, [clipboardCapabilities, content]);
 
   useEffect(() => {
     invoke("update_menu_state", {
@@ -164,10 +271,6 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
           emitEditorAction("menu-add-link");
           return;
         }
-        case "open-copy-export": {
-          emitEditorAction("menu-open-copy-export");
-          return;
-        }
         case "copy-markdown": {
           emitEditorAction("menu-copy-markdown");
           return;
@@ -188,6 +291,18 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
           emitEditorAction("menu-export-markdown");
           return;
         }
+        case "edit-cut": {
+          runEditCommand("cut");
+          return;
+        }
+        case "edit-copy": {
+          runEditCommand("copy");
+          return;
+        }
+        case "edit-paste": {
+          runEditCommand("paste");
+          return;
+        }
       }
     })
       .then((fn) => {
@@ -202,7 +317,7 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
       cancelled = true;
       unlisten?.();
     };
-  }, [reload]);
+  }, [reload, runEditCommand]);
 
   // Keyboard shortcuts for preview mode
   useEffect(() => {

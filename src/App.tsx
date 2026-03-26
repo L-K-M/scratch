@@ -47,6 +47,12 @@ function getWindowMode(): {
 
 type ViewState = "notes" | "settings";
 
+interface ClipboardCapabilities {
+  canCut: boolean;
+  canCopy: boolean;
+  canPaste: boolean;
+}
+
 function AppContent() {
   const {
     notesFolder,
@@ -75,6 +81,12 @@ function AppContent() {
   const [aiEditing, setAiEditing] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [aiProvider, setAiProvider] = useState<AiProvider>("claude");
+  const [clipboardCapabilities, setClipboardCapabilities] =
+    useState<ClipboardCapabilities>({
+      canCut: false,
+      canCopy: false,
+      canPaste: false,
+    });
   const editorRef = useRef<TiptapEditor | null>(null);
 
   // Listen for set-notes-folder event from CLI (scratch .)
@@ -119,10 +131,104 @@ function AppContent() {
     setView("notes");
   }, []);
 
+  const computeClipboardCapabilities = useCallback((): ClipboardCapabilities => {
+    const activeElement = document.activeElement;
+    const selection = window.getSelection();
+
+    const hasDocumentSelection = Boolean(
+      selection && !selection.isCollapsed && selection.toString().length > 0,
+    );
+
+    const isTextControl =
+      activeElement instanceof HTMLInputElement ||
+      activeElement instanceof HTMLTextAreaElement;
+
+    const hasInputSelection =
+      isTextControl &&
+      activeElement.selectionStart !== null &&
+      activeElement.selectionEnd !== null &&
+      activeElement.selectionEnd > activeElement.selectionStart;
+
+    const isInputEditable =
+      isTextControl &&
+      !activeElement.readOnly &&
+      !activeElement.disabled &&
+      (activeElement instanceof HTMLTextAreaElement ||
+        ![
+          "button",
+          "checkbox",
+          "color",
+          "file",
+          "hidden",
+          "image",
+          "radio",
+          "range",
+          "reset",
+          "submit",
+        ].includes(activeElement.type));
+
+    const htmlActive = activeElement as HTMLElement | null;
+    const isContentEditableTarget = Boolean(
+      htmlActive &&
+        (htmlActive.isContentEditable ||
+          htmlActive.closest("[contenteditable='true'], .ProseMirror")),
+    );
+
+    const canCut =
+      (isInputEditable && hasInputSelection) ||
+      (isContentEditableTarget && hasDocumentSelection);
+    const canCopy = hasInputSelection || hasDocumentSelection;
+    const canPaste = isInputEditable || isContentEditableTarget;
+
+    return { canCut, canCopy, canPaste };
+  }, []);
+
+  useEffect(() => {
+    const updateClipboardCapabilities = () => {
+      const next = computeClipboardCapabilities();
+      setClipboardCapabilities((prev) =>
+        prev.canCut === next.canCut &&
+        prev.canCopy === next.canCopy &&
+        prev.canPaste === next.canPaste
+          ? prev
+          : next,
+      );
+    };
+
+    updateClipboardCapabilities();
+
+    document.addEventListener("selectionchange", updateClipboardCapabilities);
+    document.addEventListener("focusin", updateClipboardCapabilities);
+    document.addEventListener("keyup", updateClipboardCapabilities);
+    document.addEventListener("mouseup", updateClipboardCapabilities);
+    window.addEventListener("focus", updateClipboardCapabilities);
+
+    return () => {
+      document.removeEventListener("selectionchange", updateClipboardCapabilities);
+      document.removeEventListener("focusin", updateClipboardCapabilities);
+      document.removeEventListener("keyup", updateClipboardCapabilities);
+      document.removeEventListener("mouseup", updateClipboardCapabilities);
+      window.removeEventListener("focus", updateClipboardCapabilities);
+    };
+  }, [computeClipboardCapabilities]);
+
+  const runEditCommand = useCallback((command: "cut" | "copy" | "paste") => {
+    const activeElement = document.activeElement as HTMLElement | null;
+    activeElement?.focus();
+
+    try {
+      document.execCommand(command);
+    } catch (error) {
+      console.error(`Failed to run ${command}:`, error);
+    }
+  }, []);
+
   const menuEnabledActions = useMemo(() => {
     const hasNotesFolder = Boolean(notesFolder);
     const isNotesView = view === "notes";
-    const hasSelectedNote = Boolean(selectedNoteId);
+    const hasSelectedNote = Boolean(
+      selectedNoteId && notes.some((note) => note.id === selectedNoteId),
+    );
     const hasCurrentNote = Boolean(currentNote);
     const hasEditorActions = isNotesView && hasCurrentNote;
     const canZoomIn = interfaceZoom < 1.5;
@@ -152,14 +258,25 @@ function AppContent() {
       "add-link": hasEditorActions,
       "toggle-focus-mode": hasSelectedNote && isNotesView,
       "toggle-source-mode": hasEditorActions,
-      "open-copy-export": hasEditorActions,
+      "copy-export-menu": hasSelectedNote,
       "copy-markdown": hasEditorActions,
       "copy-plain-text": hasEditorActions,
       "copy-html": hasEditorActions,
       "print-pdf": hasEditorActions,
       "export-markdown": hasEditorActions,
+      "edit-cut": clipboardCapabilities.canCut,
+      "edit-copy": clipboardCapabilities.canCopy,
+      "edit-paste": clipboardCapabilities.canPaste,
     };
-  }, [currentNote?.id, interfaceZoom, notesFolder, selectedNoteId, view]);
+  }, [
+    clipboardCapabilities,
+    currentNote?.id,
+    interfaceZoom,
+    notes,
+    notesFolder,
+    selectedNoteId,
+    view,
+  ]);
 
   useEffect(() => {
     invoke("update_menu_state", {
@@ -316,11 +433,6 @@ function AppContent() {
           emitEditorAction("menu-add-link");
           return;
         }
-        case "open-copy-export": {
-          setView("notes");
-          emitEditorAction("menu-open-copy-export");
-          return;
-        }
         case "copy-markdown": {
           setView("notes");
           emitEditorAction("menu-copy-markdown");
@@ -344,6 +456,18 @@ function AppContent() {
         case "export-markdown": {
           setView("notes");
           emitEditorAction("menu-export-markdown");
+          return;
+        }
+        case "edit-cut": {
+          runEditCommand("cut");
+          return;
+        }
+        case "edit-copy": {
+          runEditCommand("copy");
+          return;
+        }
+        case "edit-paste": {
+          runEditCommand("paste");
           return;
         }
         case "zoom-in": {
@@ -396,6 +520,7 @@ function AppContent() {
     setInterfaceZoom,
     toggleFocusMode,
     toggleSidebar,
+    runEditCommand,
   ]);
 
   // Go back to command palette from AI modal
