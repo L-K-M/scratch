@@ -11,6 +11,8 @@ use tantivy::query::QueryParser;
 use tantivy::schema::*;
 use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl};
+#[cfg(target_os = "macos")]
+use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::webview::WebviewWindowBuilder;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tokio::fs;
@@ -3532,9 +3534,386 @@ fn handle_cli_args(app: &AppHandle, args: &[String], cwd: &str) -> bool {
     opened_preview
 }
 
+#[cfg(target_os = "macos")]
+const MENU_ACTION_EVENT: &str = "menu-action";
+
+#[cfg(target_os = "macos")]
+const MAIN_WINDOW_MENU_ACTIONS: &[&str] = &[
+    "check-for-updates",
+    "open-settings",
+    "new-note",
+    "new-folder",
+    "duplicate-note",
+    "delete-note",
+    "open-notes-folder",
+    "search-notes",
+    "command-palette",
+    "toggle-sidebar",
+    "zoom-in",
+    "zoom-out",
+    "zoom-reset",
+    "settings-tab-general",
+    "settings-tab-editor",
+    "settings-tab-shortcuts",
+    "settings-tab-about",
+];
+
+#[cfg(target_os = "macos")]
+const FOCUSED_WINDOW_MENU_ACTIONS: &[&str] = &[
+    "reload-note",
+    "find-in-note",
+    "add-link",
+    "toggle-focus-mode",
+    "toggle-source-mode",
+    "open-copy-export",
+    "copy-markdown",
+    "copy-plain-text",
+    "copy-html",
+    "print-pdf",
+    "export-markdown",
+];
+
+#[cfg(target_os = "macos")]
+fn emit_menu_action_to_main_window<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    action: &str,
+    focus_main: bool,
+) {
+    if let Some(main_window) = app.get_webview_window("main") {
+        let _ = main_window.emit(MENU_ACTION_EVENT, action.to_string());
+        if focus_main {
+            let _ = main_window.show();
+            let _ = main_window.set_focus();
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn emit_menu_action_to_focused_window<R: tauri::Runtime>(app: &AppHandle<R>, action: &str) {
+    if let Some(window) = app
+        .webview_windows()
+        .into_values()
+        .find(|window| window.is_focused().unwrap_or(false))
+    {
+        let _ = window.emit(MENU_ACTION_EVENT, action.to_string());
+    } else if let Some(main_window) = app.get_webview_window("main") {
+        let _ = main_window.emit(MENU_ACTION_EVENT, action.to_string());
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn build_macos_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
+    let package_info = app.package_info();
+    let about_metadata = AboutMetadata {
+        name: Some(package_info.name.clone()),
+        version: Some(package_info.version.to_string()),
+        ..Default::default()
+    };
+
+    let app_menu = Submenu::with_items(
+        app,
+        package_info.name.clone(),
+        true,
+        &[
+            &PredefinedMenuItem::about(app, None, Some(about_metadata))?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "check-for-updates",
+                "Check for Updates...",
+                true,
+                None::<&str>,
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "open-settings",
+                "Settings...",
+                true,
+                Some("Cmd+,"),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::show_all(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, None)?,
+        ],
+    )?;
+
+    let copy_export_menu = Submenu::with_items(
+        app,
+        "Copy & Export",
+        true,
+        &[
+            &MenuItem::with_id(app, "copy-markdown", "Copy Markdown", true, None::<&str>)?,
+            &MenuItem::with_id(
+                app,
+                "copy-plain-text",
+                "Copy Plain Text",
+                true,
+                None::<&str>,
+            )?,
+            &MenuItem::with_id(app, "copy-html", "Copy HTML", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "print-pdf", "Print as PDF", true, None::<&str>)?,
+            &MenuItem::with_id(
+                app,
+                "export-markdown",
+                "Export Markdown",
+                true,
+                None::<&str>,
+            )?,
+        ],
+    )?;
+
+    let file_menu = Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[
+            &MenuItem::with_id(app, "new-note", "New Note", true, Some("Cmd+N"))?,
+            &MenuItem::with_id(app, "new-folder", "New Folder", true, Some("Cmd+Shift+N"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "duplicate-note",
+                "Duplicate Note",
+                true,
+                Some("Cmd+D"),
+            )?,
+            &MenuItem::with_id(app, "delete-note", "Delete Note", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "reload-note",
+                "Reload from Disk",
+                true,
+                Some("Cmd+R"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "open-notes-folder",
+                "Open Notes Folder",
+                true,
+                None::<&str>,
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "open-copy-export",
+                "Copy & Export...",
+                true,
+                Some("Cmd+Shift+C"),
+            )?,
+            &copy_export_menu,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, None)?,
+        ],
+    )?;
+
+    let edit_menu = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, None)?,
+            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "find-in-note", "Find in Note", true, Some("Cmd+F"))?,
+            &MenuItem::with_id(
+                app,
+                "search-notes",
+                "Search Notes",
+                true,
+                Some("Cmd+Shift+F"),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "add-link",
+                "Add or Edit Link",
+                true,
+                Some("Cmd+K"),
+            )?,
+        ],
+    )?;
+
+    let settings_tabs_menu = Submenu::with_items(
+        app,
+        "Settings Tabs",
+        true,
+        &[
+            &MenuItem::with_id(
+                app,
+                "settings-tab-general",
+                "General",
+                true,
+                Some("Cmd+1"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "settings-tab-editor",
+                "Appearance",
+                true,
+                Some("Cmd+2"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "settings-tab-shortcuts",
+                "Shortcuts",
+                true,
+                Some("Cmd+3"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "settings-tab-about",
+                "About",
+                true,
+                Some("Cmd+4"),
+            )?,
+        ],
+    )?;
+
+    let view_menu = Submenu::with_items(
+        app,
+        "View",
+        true,
+        &[
+            &MenuItem::with_id(
+                app,
+                "command-palette",
+                "Command Palette",
+                true,
+                Some("Cmd+P"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "toggle-sidebar",
+                "Toggle Sidebar",
+                true,
+                Some("Cmd+\\"),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "toggle-focus-mode",
+                "Toggle Focus Mode",
+                true,
+                Some("Cmd+Shift+Enter"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "toggle-source-mode",
+                "Toggle Markdown Source",
+                true,
+                Some("Cmd+Shift+M"),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "zoom-in", "Zoom In", true, Some("Cmd+="))?,
+            &MenuItem::with_id(app, "zoom-out", "Zoom Out", true, Some("Cmd+-"))?,
+            &MenuItem::with_id(app, "zoom-reset", "Actual Size", true, Some("Cmd+0"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::fullscreen(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &settings_tabs_menu,
+        ],
+    )?;
+
+    let window_menu = Submenu::with_items(
+        app,
+        "Window",
+        true,
+        &[
+            &PredefinedMenuItem::minimize(app, None)?,
+            &PredefinedMenuItem::maximize(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, None)?,
+        ],
+    )?;
+
+    let help_menu = Submenu::with_items(
+        app,
+        "Help",
+        true,
+        &[
+            &MenuItem::with_id(
+                app,
+                "help-open-website",
+                "Scratch Website",
+                true,
+                None::<&str>,
+            )?,
+            &MenuItem::with_id(
+                app,
+                "help-view-github",
+                "View on GitHub",
+                true,
+                None::<&str>,
+            )?,
+            &MenuItem::with_id(
+                app,
+                "help-submit-feedback",
+                "Submit Feedback",
+                true,
+                None::<&str>,
+            )?,
+        ],
+    )?;
+
+    Menu::with_items(
+        app,
+        &[
+            &app_menu,
+            &file_menu,
+            &edit_menu,
+            &view_menu,
+            &window_menu,
+            &help_menu,
+        ],
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn handle_macos_menu_event<R: tauri::Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEvent) {
+    let id = event.id().as_ref();
+
+    match id {
+        "help-open-website" => {
+            let _ = open::that("https://www.ericli.io/scratch");
+            return;
+        }
+        "help-view-github" => {
+            let _ = open::that("https://github.com/erictli/scratch");
+            return;
+        }
+        "help-submit-feedback" => {
+            let _ = open::that("https://github.com/erictli/scratch/issues");
+            return;
+        }
+        _ => {}
+    }
+
+    if MAIN_WINDOW_MENU_ACTIONS.contains(&id) {
+        emit_menu_action_to_main_window(app, id, true);
+        return;
+    }
+
+    if FOCUSED_WINDOW_MENU_ACTIONS.contains(&id) {
+        emit_menu_action_to_focused_window(app, id);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // Single-instance: forward CLI args from subsequent launches to the running instance
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             handle_cli_args(app, &args, &cwd);
@@ -3543,7 +3922,14 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build());
+
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(build_macos_menu)
+        .on_menu_event(handle_macos_menu_event);
+
+    let app = builder
         .setup(|app| {
             // Load app config on startup (contains notes folder path)
             let mut app_config = load_app_config(app.handle());
