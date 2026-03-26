@@ -28,6 +28,19 @@ export interface EditorFontSettings {
   lineHeight?: number; // default 1.6
 }
 
+export interface UiWindowPosition {
+  x: number;
+  y: number;
+  coordinateSpace: "logical";
+}
+
+export interface UiState {
+  schemaVersion?: number;
+  selectedNoteId?: string | null;
+  sidebarVisible?: boolean;
+  windowPosition?: UiWindowPosition;
+}
+
 // Customizable theme color keys (maps to CSS --color-* variables)
 export type ThemeColorKey =
   | "bg"
@@ -56,6 +69,8 @@ export interface Settings {
   defaultNoteName?: string;
   interfaceZoom?: number;
   ollamaModel?: string;
+  restoreUiState?: boolean;
+  uiState?: UiState;
   ignoredPatterns?: string[];
   customColorsLight?: CustomColors;
   customColorsDark?: CustomColors;

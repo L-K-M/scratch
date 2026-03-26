@@ -30,6 +30,7 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as aiService from "./services/ai";
 import type { AiProvider } from "./services/ai";
+import * as notesService from "./services/notes";
 
 // Detect preview mode from URL search params
 function getWindowMode(): {
@@ -77,6 +78,8 @@ function AppContent() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [view, setView] = useState<ViewState>("notes");
   const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [restoreUiStateEnabled, setRestoreUiStateEnabled] = useState(false);
+  const [uiStateInitialized, setUiStateInitialized] = useState(false);
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [aiEditing, setAiEditing] = useState(false);
@@ -90,6 +93,8 @@ function AppContent() {
       canSelectAll: false,
     });
   const editorRef = useRef<TiptapEditor | null>(null);
+  const persistUiStateTimeoutRef = useRef<number | null>(null);
+  const initializedFolderRef = useRef<string | null>(null);
 
   // Listen for set-notes-folder event from CLI (scratch .)
   // Placed here in AppContent where both NotesContext and ThemeContext are available
@@ -108,6 +113,116 @@ function AppContent() {
       unlisten?.();
     };
   }, [syncNotesFolder, reloadSettings]);
+
+  // Re-run UI state initialization when notes folder changes
+  useEffect(() => {
+    if (initializedFolderRef.current === notesFolder) return;
+    initializedFolderRef.current = notesFolder;
+    setRestoreUiStateEnabled(false);
+    setUiStateInitialized(false);
+  }, [notesFolder]);
+
+  // Restore UI state once notes are loaded
+  useEffect(() => {
+    if (isLoading || !notesFolder || uiStateInitialized) return;
+
+    let cancelled = false;
+
+    const restoreUiState = async () => {
+      try {
+        const settings = await notesService.getSettings();
+        if (cancelled) return;
+
+        const enabled = settings.restoreUiState === true;
+        setRestoreUiStateEnabled(enabled);
+
+        if (!enabled || !settings.uiState) return;
+
+        if (typeof settings.uiState.sidebarVisible === "boolean") {
+          setSidebarVisible(settings.uiState.sidebarVisible);
+        }
+
+        const savedNoteId = settings.uiState.selectedNoteId;
+        if (typeof savedNoteId === "string") {
+          const notesList = await notesService.listNotes();
+          if (cancelled) return;
+
+          if (!notesList.some((note) => note.id === savedNoteId)) {
+            return;
+          }
+
+          try {
+            await selectNote(savedNoteId);
+          } catch (error) {
+            console.error("Failed to restore selected note:", error);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to restore UI state:", error);
+        setRestoreUiStateEnabled(false);
+      } finally {
+        if (!cancelled) {
+          setUiStateInitialized(true);
+        }
+      }
+    };
+
+    restoreUiState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoading, notesFolder, selectNote, uiStateInitialized]);
+
+  // React to settings toggle changes made from General settings
+  useEffect(() => {
+    const handleSettingChange = (event: Event) => {
+      const customEvent = event as CustomEvent<boolean>;
+      setRestoreUiStateEnabled(customEvent.detail === true);
+    };
+
+    window.addEventListener(
+      "ui-state-restore-setting-changed",
+      handleSettingChange,
+    );
+
+    return () => {
+      window.removeEventListener(
+        "ui-state-restore-setting-changed",
+        handleSettingChange,
+      );
+    };
+  }, []);
+
+  // Persist selected note + sidebar visibility when restoration is enabled
+  useEffect(() => {
+    if (!uiStateInitialized || !restoreUiStateEnabled || !notesFolder) return;
+
+    if (persistUiStateTimeoutRef.current) {
+      clearTimeout(persistUiStateTimeoutRef.current);
+    }
+
+    persistUiStateTimeoutRef.current = window.setTimeout(() => {
+      notesService
+        .updateUiState(selectedNoteId, sidebarVisible, notesFolder)
+        .catch((error) => {
+          console.error("Failed to persist UI state:", error);
+        });
+    }, 200);
+
+    return () => {
+      if (persistUiStateTimeoutRef.current) {
+        clearTimeout(persistUiStateTimeoutRef.current);
+        persistUiStateTimeoutRef.current = null;
+      }
+    };
+  }, [
+    uiStateInitialized,
+    restoreUiStateEnabled,
+    notesFolder,
+    selectedNoteId,
+    sidebarVisible,
+  ]);
 
   const toggleSidebar = useCallback(() => {
     setSidebarVisible((prev) => !prev);
