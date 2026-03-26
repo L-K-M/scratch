@@ -339,6 +339,8 @@ pub struct AppState {
     pub file_watcher: Mutex<Option<FileWatcherState>>,
     pub search_index: Mutex<Option<SearchIndex>>,
     pub debounce_map: Arc<Mutex<HashMap<PathBuf, Instant>>>,
+    #[cfg(target_os = "macos")]
+    pub menu_enabled_actions: Mutex<HashMap<String, HashMap<String, bool>>>,
 }
 
 impl Default for AppState {
@@ -350,6 +352,8 @@ impl Default for AppState {
             file_watcher: Mutex::new(None),
             search_index: Mutex::new(None),
             debounce_map: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(target_os = "macos")]
+            menu_enabled_actions: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -3613,6 +3617,41 @@ fn handle_cli_args(app: &AppHandle, args: &[String], cwd: &str) -> bool {
     opened_preview
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MenuStateUpdate {
+    enabled_actions: HashMap<String, bool>,
+}
+
+#[tauri::command]
+fn update_menu_state(
+    window: tauri::Window,
+    menu_state: MenuStateUpdate,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        {
+            let mut states = app_state
+                .menu_enabled_actions
+                .lock()
+                .map_err(|e| e.to_string())?;
+            states.insert(window.label().to_string(), menu_state.enabled_actions);
+        }
+
+        apply_macos_menu_enabled_state(&window.app_handle(), &app_state);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        let _ = menu_state;
+        let _ = app_state;
+    }
+
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 const MENU_ACTION_EVENT: &str = "menu-action";
 
@@ -3651,6 +3690,88 @@ const FOCUSED_WINDOW_MENU_ACTIONS: &[&str] = &[
     "print-pdf",
     "export-markdown",
 ];
+
+#[cfg(target_os = "macos")]
+fn set_menu_item_enabled<R: tauri::Runtime>(menu: &Menu<R>, id: &str, enabled: bool) {
+    if let Some(item) = menu.get(id) {
+        if let Some(menu_item) = item.as_menuitem() {
+            let _ = menu_item.set_enabled(enabled);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn action_enabled(
+    actions: Option<&HashMap<String, bool>>,
+    action: &str,
+    fallback: bool,
+) -> bool {
+    actions
+        .and_then(|map| map.get(action))
+        .copied()
+        .unwrap_or(fallback)
+}
+
+#[cfg(target_os = "macos")]
+fn apply_macos_menu_enabled_state<R: tauri::Runtime>(app: &AppHandle<R>, app_state: &AppState) {
+    let Some(menu) = app.menu() else {
+        return;
+    };
+
+    let focused_label = app
+        .webview_windows()
+        .into_iter()
+        .find(|(_, window)| window.is_focused().unwrap_or(false))
+        .map(|(label, _)| label);
+
+    let (main_actions, focused_actions) = {
+        let states = match app_state.menu_enabled_actions.lock() {
+            Ok(states) => states,
+            Err(_) => return,
+        };
+
+        let main_actions = states.get("main").cloned();
+        let focused_actions = focused_label
+            .as_ref()
+            .and_then(|label| states.get(label))
+            .cloned()
+            .or_else(|| main_actions.clone());
+
+        (main_actions, focused_actions)
+    };
+
+    let has_notes_folder = app_state
+        .app_config
+        .read()
+        .map(|config| config.notes_folder.is_some())
+        .unwrap_or(false);
+
+    for action in MAIN_WINDOW_MENU_ACTIONS {
+        let fallback = match *action {
+            "check-for-updates" => true,
+            "zoom-in" | "zoom-out" | "zoom-reset" => true,
+            "open-settings"
+            | "new-note"
+            | "new-folder"
+            | "open-notes-folder"
+            | "search-notes"
+            | "command-palette"
+            | "toggle-sidebar"
+            | "settings-tab-general"
+            | "settings-tab-editor"
+            | "settings-tab-shortcuts"
+            | "settings-tab-about" => has_notes_folder,
+            _ => false,
+        };
+        let enabled = action_enabled(main_actions.as_ref(), action, fallback);
+        set_menu_item_enabled(&menu, action, enabled);
+    }
+
+    for action in FOCUSED_WINDOW_MENU_ACTIONS {
+        let enabled = action_enabled(focused_actions.as_ref(), action, false);
+        set_menu_item_enabled(&menu, action, enabled);
+    }
+}
 
 #[cfg(target_os = "macos")]
 fn emit_menu_action_to_main_window<R: tauri::Runtime>(
@@ -4063,8 +4184,16 @@ pub fn run() {
                 file_watcher: Mutex::new(None),
                 search_index: Mutex::new(search_index),
                 debounce_map: Arc::new(Mutex::new(HashMap::new())),
+                #[cfg(target_os = "macos")]
+                menu_enabled_actions: Mutex::new(HashMap::new()),
             };
             app.manage(state);
+
+            #[cfg(target_os = "macos")]
+            {
+                let app_state = app.state::<AppState>();
+                apply_macos_menu_enabled_state(app.handle(), &app_state);
+            }
 
             // Add notes folder to asset protocol scope so images can be served
             if let Some(ref folder) = app.state::<AppState>().app_config.read().expect("app_config read lock").notes_folder.clone() {
@@ -4124,6 +4253,16 @@ pub fn run() {
                     }
                 }
             }
+
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                let label = window.label().to_string();
+                let app_state = window.state::<AppState>();
+                if let Ok(mut states) = app_state.menu_enabled_actions.lock() {
+                    states.remove(&label);
+                }
+                apply_macos_menu_enabled_state(&window.app_handle(), &app_state);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             get_notes_folder,
@@ -4175,6 +4314,7 @@ pub fn run() {
             save_file_direct,
             import_file_to_folder,
             open_file_preview,
+            update_menu_state,
             install_cli,
             uninstall_cli,
             get_cli_status,
