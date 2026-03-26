@@ -3617,6 +3617,7 @@ const FOCUSED_WINDOW_MENU_ACTIONS: &[&str] = &[
     "edit-cut",
     "edit-copy",
     "edit-paste",
+    "edit-select-all",
 ];
 
 #[cfg(target_os = "macos")]
@@ -3774,6 +3775,8 @@ fn build_macos_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu
     let about_metadata = AboutMetadata {
         name: Some(package_info.name.clone()),
         version: Some(package_info.version.to_string()),
+        icon: app.default_window_icon().cloned(),
+        credits: Some("GitHub: https://github.com/erictli/scratch".to_string()),
         ..Default::default()
     };
 
@@ -3886,7 +3889,7 @@ fn build_macos_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu
             &MenuItem::with_id(app, "edit-cut", "Cut", true, Some("Cmd+X"))?,
             &MenuItem::with_id(app, "edit-copy", "Copy", true, Some("Cmd+C"))?,
             &MenuItem::with_id(app, "edit-paste", "Paste", true, Some("Cmd+V"))?,
-            &PredefinedMenuItem::select_all(app, None)?,
+            &MenuItem::with_id(app, "edit-select-all", "Select All", true, Some("Cmd+A"))?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "find-in-note", "Find in Note", true, Some("Cmd+F"))?,
             &MenuItem::with_id(
