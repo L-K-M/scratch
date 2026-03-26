@@ -1823,6 +1823,9 @@ fn update_settings(
     let settings = state.settings.read().expect("settings read lock");
     save_settings(&folder, &settings).map_err(|e| e.to_string())?;
 
+    #[cfg(target_os = "macos")]
+    apply_macos_menu_enabled_state(&app_handle, &state);
+
     Ok(())
 }
 
@@ -1867,9 +1870,6 @@ fn update_ui_state(
 
     let settings = state.settings.read().expect("settings read lock");
     save_settings(&folder, &settings).map_err(|e| e.to_string())?;
-
-    #[cfg(target_os = "macos")]
-    apply_macos_menu_enabled_state(&app_handle, &state);
 
     Ok(())
 }
