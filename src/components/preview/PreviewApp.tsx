@@ -94,6 +94,77 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
     };
   }, []);
 
+  // Handle native menu actions when a preview window is focused
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    const emitEditorAction = (name: string) => {
+      window.dispatchEvent(new CustomEvent(name));
+    };
+
+    listen<string>("menu-action", async (event) => {
+      switch (event.payload) {
+        case "reload-note": {
+          await reload();
+          return;
+        }
+        case "toggle-focus-mode": {
+          setFocusMode((prev) => !prev);
+          return;
+        }
+        case "toggle-source-mode": {
+          window.dispatchEvent(new CustomEvent("toggle-source-mode"));
+          return;
+        }
+        case "find-in-note": {
+          emitEditorAction("menu-find-in-note");
+          return;
+        }
+        case "add-link": {
+          emitEditorAction("menu-add-link");
+          return;
+        }
+        case "open-copy-export": {
+          emitEditorAction("menu-open-copy-export");
+          return;
+        }
+        case "copy-markdown": {
+          emitEditorAction("menu-copy-markdown");
+          return;
+        }
+        case "copy-plain-text": {
+          emitEditorAction("menu-copy-plain-text");
+          return;
+        }
+        case "copy-html": {
+          emitEditorAction("menu-copy-html");
+          return;
+        }
+        case "print-pdf": {
+          emitEditorAction("menu-print-pdf");
+          return;
+        }
+        case "export-markdown": {
+          emitEditorAction("menu-export-markdown");
+          return;
+        }
+      }
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch((error) => {
+        console.error("Failed to subscribe to menu-action events:", error);
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [reload]);
+
   // Keyboard shortcuts for preview mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

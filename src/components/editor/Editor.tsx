@@ -2049,6 +2049,96 @@ export function Editor({
     return () => window.removeEventListener("toggle-source-mode", handler);
   }, [toggleSourceMode]);
 
+  // Handle editor actions triggered from the native menu
+  useEffect(() => {
+    const handleAddLinkFromMenu = () => {
+      if (editor && currentNote) {
+        handleAddLink();
+      }
+    };
+
+    const handleFindInNoteFromMenu = () => {
+      if (editor && currentNote) {
+        openEditorSearch();
+      }
+    };
+
+    const handleOpenCopyExportFromMenu = () => {
+      setCopyMenuOpen(true);
+    };
+
+    const handleCopyMarkdownFromMenu = () => {
+      void handleCopyMarkdown();
+    };
+
+    const handleCopyPlainTextFromMenu = () => {
+      void handleCopyPlainText();
+    };
+
+    const handleCopyHtmlFromMenu = () => {
+      void handleCopyHtml();
+    };
+
+    const handlePrintPdfFromMenu = () => {
+      void handleDownloadPdf();
+    };
+
+    const handleExportMarkdownFromMenu = () => {
+      void handleDownloadMarkdown();
+    };
+
+    window.addEventListener("menu-add-link", handleAddLinkFromMenu);
+    window.addEventListener("menu-find-in-note", handleFindInNoteFromMenu);
+    window.addEventListener(
+      "menu-open-copy-export",
+      handleOpenCopyExportFromMenu,
+    );
+    window.addEventListener("menu-copy-markdown", handleCopyMarkdownFromMenu);
+    window.addEventListener(
+      "menu-copy-plain-text",
+      handleCopyPlainTextFromMenu,
+    );
+    window.addEventListener("menu-copy-html", handleCopyHtmlFromMenu);
+    window.addEventListener("menu-print-pdf", handlePrintPdfFromMenu);
+    window.addEventListener(
+      "menu-export-markdown",
+      handleExportMarkdownFromMenu,
+    );
+
+    return () => {
+      window.removeEventListener("menu-add-link", handleAddLinkFromMenu);
+      window.removeEventListener("menu-find-in-note", handleFindInNoteFromMenu);
+      window.removeEventListener(
+        "menu-open-copy-export",
+        handleOpenCopyExportFromMenu,
+      );
+      window.removeEventListener(
+        "menu-copy-markdown",
+        handleCopyMarkdownFromMenu,
+      );
+      window.removeEventListener(
+        "menu-copy-plain-text",
+        handleCopyPlainTextFromMenu,
+      );
+      window.removeEventListener("menu-copy-html", handleCopyHtmlFromMenu);
+      window.removeEventListener("menu-print-pdf", handlePrintPdfFromMenu);
+      window.removeEventListener(
+        "menu-export-markdown",
+        handleExportMarkdownFromMenu,
+      );
+    };
+  }, [
+    currentNote,
+    editor,
+    handleAddLink,
+    handleCopyHtml,
+    handleCopyMarkdown,
+    handleCopyPlainText,
+    handleDownloadMarkdown,
+    handleDownloadPdf,
+    openEditorSearch,
+  ]);
+
   // Auto-save in source mode with debounce
   const handleSourceChange = useCallback(
     (value: string) => {

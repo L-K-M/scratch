@@ -72,6 +72,19 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Allow menu actions to jump directly to a settings tab
+  useEffect(() => {
+    const handleTabSelect = (event: Event) => {
+      const customEvent = event as CustomEvent<SettingsTab>;
+      if (!customEvent.detail) return;
+      setActiveTab(customEvent.detail);
+    };
+
+    window.addEventListener("settings-tab-select", handleTabSelect);
+    return () =>
+      window.removeEventListener("settings-tab-select", handleTabSelect);
+  }, []);
+
   return (
     <div className="h-full flex bg-bg w-full">
       {/* Sidebar - matches main Notes sidebar */}

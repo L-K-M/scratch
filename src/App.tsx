@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { NotesProvider, useNotes } from "./context/NotesContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { GitProvider } from "./context/GitContext";
 import { TooltipProvider, Toaster } from "./components/ui";
 import { Sidebar } from "./components/layout/Sidebar";
@@ -117,6 +118,222 @@ function AppContent() {
   const closeSettings = useCallback(() => {
     setView("notes");
   }, []);
+
+  // Handle menu actions from native macOS menu
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    const openSettingsTab = (
+      tab: "general" | "editor" | "shortcuts" | "about",
+    ) => {
+      setView("settings");
+      requestAnimationFrame(() => {
+        window.dispatchEvent(
+          new CustomEvent("settings-tab-select", { detail: tab }),
+        );
+      });
+    };
+
+    const emitEditorAction = (name: string) => {
+      window.dispatchEvent(new CustomEvent(name));
+    };
+
+    listen<string>("menu-action", async (event) => {
+      const action = event.payload;
+
+      switch (action) {
+        case "check-for-updates": {
+          const result = await showUpdateToast();
+          if (result === "no-update") {
+            toast.success("You're on the latest version!");
+          } else if (result === "error") {
+            toast.error("Could not check for updates. Try again later.");
+          }
+          return;
+        }
+        case "open-settings": {
+          setView("settings");
+          return;
+        }
+        case "settings-tab-general": {
+          openSettingsTab("general");
+          return;
+        }
+        case "settings-tab-editor": {
+          openSettingsTab("editor");
+          return;
+        }
+        case "settings-tab-shortcuts": {
+          openSettingsTab("shortcuts");
+          return;
+        }
+        case "settings-tab-about": {
+          openSettingsTab("about");
+          return;
+        }
+        case "new-note": {
+          setView("notes");
+          createNote();
+          return;
+        }
+        case "new-folder": {
+          setView("notes");
+          requestAnimationFrame(() => {
+            window.dispatchEvent(new CustomEvent("create-new-folder"));
+          });
+          return;
+        }
+        case "duplicate-note": {
+          setView("notes");
+          if (selectedNoteId) {
+            await duplicateNote(selectedNoteId);
+          }
+          return;
+        }
+        case "delete-note": {
+          setView("notes");
+          if (selectedNoteId) {
+            window.dispatchEvent(
+              new CustomEvent("request-delete-note", { detail: selectedNoteId }),
+            );
+          }
+          return;
+        }
+        case "reload-note": {
+          setView("notes");
+          await reloadCurrentNote();
+          return;
+        }
+        case "open-notes-folder": {
+          if (!notesFolder) return;
+          try {
+            await invoke("open_in_file_manager", { path: notesFolder });
+          } catch (error) {
+            console.error("Failed to open notes folder:", error);
+            toast.error("Failed to open notes folder");
+          }
+          return;
+        }
+        case "search-notes": {
+          setView("notes");
+          requestAnimationFrame(() => {
+            setSidebarVisible(true);
+            window.dispatchEvent(new CustomEvent("open-sidebar-search"));
+          });
+          return;
+        }
+        case "command-palette": {
+          setView("notes");
+          setPaletteOpen(true);
+          return;
+        }
+        case "toggle-sidebar": {
+          setView("notes");
+          toggleSidebar();
+          return;
+        }
+        case "toggle-focus-mode": {
+          setView("notes");
+          toggleFocusMode();
+          return;
+        }
+        case "toggle-source-mode": {
+          setView("notes");
+          window.dispatchEvent(new CustomEvent("toggle-source-mode"));
+          return;
+        }
+        case "find-in-note": {
+          setView("notes");
+          emitEditorAction("menu-find-in-note");
+          return;
+        }
+        case "add-link": {
+          setView("notes");
+          emitEditorAction("menu-add-link");
+          return;
+        }
+        case "open-copy-export": {
+          setView("notes");
+          emitEditorAction("menu-open-copy-export");
+          return;
+        }
+        case "copy-markdown": {
+          setView("notes");
+          emitEditorAction("menu-copy-markdown");
+          return;
+        }
+        case "copy-plain-text": {
+          setView("notes");
+          emitEditorAction("menu-copy-plain-text");
+          return;
+        }
+        case "copy-html": {
+          setView("notes");
+          emitEditorAction("menu-copy-html");
+          return;
+        }
+        case "print-pdf": {
+          setView("notes");
+          emitEditorAction("menu-print-pdf");
+          return;
+        }
+        case "export-markdown": {
+          setView("notes");
+          emitEditorAction("menu-export-markdown");
+          return;
+        }
+        case "zoom-in": {
+          setInterfaceZoom((prev) => prev + 0.05);
+          const newZoom =
+            Math.round(Math.min(interfaceZoomRef.current + 0.05, 1.5) * 20) /
+            20;
+          toast(`Zoom ${Math.round(newZoom * 100)}%`, {
+            id: "zoom",
+            duration: 1500,
+          });
+          return;
+        }
+        case "zoom-out": {
+          setInterfaceZoom((prev) => prev - 0.05);
+          const newZoom =
+            Math.round(Math.max(interfaceZoomRef.current - 0.05, 0.7) * 20) /
+            20;
+          toast(`Zoom ${Math.round(newZoom * 100)}%`, {
+            id: "zoom",
+            duration: 1500,
+          });
+          return;
+        }
+        case "zoom-reset": {
+          setInterfaceZoom(1.0);
+          toast("Zoom 100%", { id: "zoom", duration: 1500 });
+          return;
+        }
+      }
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch((error) => {
+        console.error("Failed to subscribe to menu-action events:", error);
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [
+    createNote,
+    duplicateNote,
+    notesFolder,
+    reloadCurrentNote,
+    selectedNoteId,
+    setInterfaceZoom,
+    toggleFocusMode,
+    toggleSidebar,
+  ]);
 
   // Go back to command palette from AI modal
   const handleBackToPalette = useCallback(() => {
