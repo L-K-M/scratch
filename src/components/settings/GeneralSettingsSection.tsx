@@ -378,6 +378,24 @@ export function GeneralSettingsSection() {
       {/* Divider */}
       <div className="border-t border-border border-dashed" />
 
+      {/* UI State Section */}
+      <section className="pb-2">
+        <div className="flex items-center justify-between gap-6">
+          <div className="flex flex-col gap-0.75">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-medium">Restore Session</h2>
+            </div>
+            <p className="text-sm text-text-muted max-w-lg">
+              Restore your previous note, sidebar visibility, focus mode, and window position when restarting Scratch.
+            </p>
+          </div>
+          <RestoreUiStateToggle />
+        </div>
+      </section>
+
+      {/* Divider */}
+      <div className="border-t border-border border-dashed" />
+
       {/* Git Section */}
       <section className="pb-2 flex flex-col gap-4">
         <div className="flex items-center justify-between gap-6">
@@ -966,6 +984,78 @@ function FoldersToggle() {
       <Button
         onClick={() => handleToggle(true)}
         variant={foldersEnabled ? "primary" : "ghost"}
+        size="xs"
+        disabled={isUpdating}
+      >
+        On
+      </Button>
+    </div>
+  );
+}
+
+function RestoreUiStateToggle() {
+  const [restoreUiState, setRestoreUiState] = useState<boolean | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  useEffect(() => {
+    invoke<Settings>("get_settings")
+      .then((settings) => {
+        setRestoreUiState(settings.restoreUiState === true);
+      })
+      .catch((error) => {
+        console.error("Failed to load UI restore setting:", error);
+        setRestoreUiState(false);
+      });
+  }, []);
+
+  const handleToggle = async (enabled: boolean) => {
+    if (isUpdating || restoreUiState === enabled) return;
+
+    setIsUpdating(true);
+    try {
+      const settings = await invoke<Settings>("get_settings");
+      await invoke("update_settings", {
+        newSettings: { ...settings, restoreUiState: enabled },
+      });
+      setRestoreUiState(enabled);
+      window.dispatchEvent(
+        new CustomEvent<boolean>("ui-state-restore-setting-changed", {
+          detail: enabled,
+        }),
+      );
+    } catch {
+      toast.error("Failed to update UI restore setting");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  if (restoreUiState === null) {
+    return (
+      <div className="flex gap-1 p-1 rounded-[10px] border border-border shrink-0">
+        <Button variant="ghost" size="xs" disabled>
+          Off
+        </Button>
+        <Button variant="ghost" size="xs" disabled>
+          On
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex gap-1 p-1 rounded-[10px] border border-border shrink-0">
+      <Button
+        onClick={() => handleToggle(false)}
+        variant={!restoreUiState ? "primary" : "ghost"}
+        size="xs"
+        disabled={isUpdating}
+      >
+        Off
+      </Button>
+      <Button
+        onClick={() => handleToggle(true)}
+        variant={restoreUiState ? "primary" : "ghost"}
         size="xs"
         disabled={isUpdating}
       >

@@ -72,6 +72,20 @@ export async function updateSettings(settings: Settings): Promise<void> {
   return invoke("update_settings", { newSettings: settings });
 }
 
+export async function updateUiState(
+  selectedNoteId: string | null,
+  sidebarVisible: boolean,
+  focusMode: boolean,
+  expectedFolder: string,
+): Promise<void> {
+  return invoke("update_ui_state", {
+    selectedNoteId,
+    sidebarVisible,
+    focusMode,
+    expectedFolder,
+  });
+}
+
 export async function updateGitEnabled(
   enabled: boolean,
   expectedFolder: string,

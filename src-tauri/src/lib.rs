@@ -98,6 +98,56 @@ pub enum TextDirection {
     Rtl,
 }
 
+fn default_ui_state_schema_version() -> u8 {
+    1
+}
+
+fn default_window_coordinate_space() -> String {
+    "logical".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowPositionState {
+    pub x: f64,
+    pub y: f64,
+    #[serde(default = "default_window_coordinate_space")]
+    pub coordinate_space: String,
+}
+
+impl Default for WindowPositionState {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            coordinate_space: default_window_coordinate_space(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStateSnapshot {
+    #[serde(default = "default_ui_state_schema_version")]
+    pub schema_version: u8,
+    pub selected_note_id: Option<String>,
+    pub sidebar_visible: Option<bool>,
+    pub focus_mode: Option<bool>,
+    pub window_position: Option<WindowPositionState>,
+}
+
+impl Default for UiStateSnapshot {
+    fn default() -> Self {
+        Self {
+            schema_version: default_ui_state_schema_version(),
+            selected_note_id: None,
+            sidebar_visible: None,
+            focus_mode: None,
+            window_position: None,
+        }
+    }
+}
+
 // App config (stored in app data directory - just the notes folder path)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
@@ -128,6 +178,10 @@ pub struct Settings {
     pub ollama_model: Option<String>,
     #[serde(rename = "foldersEnabled")]
     pub folders_enabled: Option<bool>,
+    #[serde(rename = "restoreUiState")]
+    pub restore_ui_state: Option<bool>,
+    #[serde(rename = "uiState")]
+    pub ui_state: Option<UiStateSnapshot>,
 }
 
 // Search result
@@ -724,6 +778,89 @@ fn save_settings(notes_folder: &str, settings: &Settings) -> Result<()> {
     let content = serde_json::to_string_pretty(settings)?;
     std::fs::write(path, content)?;
     Ok(())
+}
+
+fn capture_main_window_position(app: &AppHandle) -> Option<WindowPositionState> {
+    let window = app.get_webview_window("main")?;
+    let position = window.outer_position().ok()?;
+    let scale_factor = window.scale_factor().ok()?;
+
+    if !scale_factor.is_finite() || scale_factor <= 0.0 {
+        return None;
+    }
+
+    Some(WindowPositionState {
+        x: position.x as f64 / scale_factor,
+        y: position.y as f64 / scale_factor,
+        coordinate_space: default_window_coordinate_space(),
+    })
+}
+
+fn restore_main_window_position(app: &AppHandle) {
+    let saved_position = {
+        let state = app.state::<AppState>();
+        let settings = state.settings.read().expect("settings read lock");
+
+        if settings.restore_ui_state != Some(true) {
+            return;
+        }
+
+        settings
+            .ui_state
+            .as_ref()
+            .and_then(|ui_state| ui_state.window_position.clone())
+    };
+
+    let Some(saved_position) = saved_position else {
+        return;
+    };
+
+    if saved_position.coordinate_space != "logical"
+        || !saved_position.x.is_finite()
+        || !saved_position.y.is_finite()
+    {
+        return;
+    }
+
+    if let Some(window) = app.get_webview_window("main") {
+        let logical = tauri::LogicalPosition::new(saved_position.x, saved_position.y);
+        if let Err(err) = window.set_position(tauri::Position::Logical(logical)) {
+            eprintln!("Failed to restore window position: {}", err);
+        }
+    }
+}
+
+fn persist_main_window_position(app: &AppHandle) {
+    let Some(position) = capture_main_window_position(app) else {
+        return;
+    };
+
+    let state = app.state::<AppState>();
+
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        let Some(folder) = app_config.notes_folder.clone() else {
+            return;
+        };
+        folder
+    };
+
+    {
+        let mut settings = state.settings.write().expect("settings write lock");
+
+        if settings.restore_ui_state != Some(true) {
+            return;
+        }
+
+        let ui_state = settings.ui_state.get_or_insert_with(UiStateSnapshot::default);
+        ui_state.schema_version = default_ui_state_schema_version();
+        ui_state.window_position = Some(position);
+    }
+
+    let settings = state.settings.read().expect("settings read lock");
+    if let Err(err) = save_settings(&folder, &settings) {
+        eprintln!("Failed to persist UI state: {}", err);
+    }
 }
 
 // Clean up old entries from debounce map (entries older than 5 seconds)
@@ -1681,6 +1818,51 @@ fn update_settings(
     {
         let mut settings = state.settings.write().expect("settings write lock");
         *settings = new_settings;
+    }
+
+    let settings = state.settings.read().expect("settings read lock");
+    save_settings(&folder, &settings).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn update_ui_state(
+    selected_note_id: Option<String>,
+    sidebar_visible: bool,
+    focus_mode: bool,
+    expected_folder: String,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        let folder = app_config.notes_folder.clone().ok_or("Notes folder not set")?;
+
+        if folder != expected_folder {
+            return Err("Notes folder changed".to_string());
+        }
+
+        folder
+    };
+
+    let window_position = capture_main_window_position(&app);
+
+    {
+        let mut settings = state.settings.write().expect("settings write lock");
+
+        if settings.restore_ui_state != Some(true) {
+            return Ok(());
+        }
+
+        let ui_state = settings.ui_state.get_or_insert_with(UiStateSnapshot::default);
+        ui_state.schema_version = default_ui_state_schema_version();
+        ui_state.selected_note_id = selected_note_id;
+        ui_state.sidebar_visible = Some(sidebar_visible);
+        ui_state.focus_mode = Some(focus_mode);
+        if let Some(position) = window_position {
+            ui_state.window_position = Some(position);
+        }
     }
 
     let settings = state.settings.read().expect("settings read lock");
@@ -4158,6 +4340,10 @@ pub fn run() {
                 apply_macos_menu_enabled_state(app.handle(), &app_state);
             }
 
+            // Restore window position from per-folder settings when enabled.
+            // Failures are ignored so startup always falls back to default behavior.
+            restore_main_window_position(app.handle());
+
             // Add notes folder to asset protocol scope so images can be served
             if let Some(ref folder) = app.state::<AppState>().app_config.read().expect("app_config read lock").notes_folder.clone() {
                 let _ = app.asset_protocol_scope().allow_directory(folder, true);
@@ -4204,6 +4390,17 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Persist final window position on app quit when UI state restore is enabled.
+            if window.label() == "main"
+                && matches!(
+                    event,
+                    tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+                )
+            {
+                let app = window.app_handle();
+                persist_main_window_position(&app);
+            }
+
             // Handle drag-and-drop of .md files onto any window
             if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
                 let app = window.app_handle();
@@ -4243,6 +4440,7 @@ pub fn run() {
             move_folder,
             get_settings,
             update_settings,
+            update_ui_state,
             update_git_enabled,
             preview_note_name,
             write_file,
