@@ -51,6 +51,7 @@ interface ClipboardCapabilities {
   canCut: boolean;
   canCopy: boolean;
   canPaste: boolean;
+  canSelectAll: boolean;
 }
 
 function AppContent() {
@@ -86,6 +87,7 @@ function AppContent() {
       canCut: false,
       canCopy: false,
       canPaste: false,
+      canSelectAll: false,
     });
   const editorRef = useRef<TiptapEditor | null>(null);
 
@@ -149,9 +151,8 @@ function AppContent() {
       activeElement.selectionEnd !== null &&
       activeElement.selectionEnd > activeElement.selectionStart;
 
-    const isInputEditable =
+    const isInputSelectable =
       isTextControl &&
-      !activeElement.readOnly &&
       !activeElement.disabled &&
       (activeElement instanceof HTMLTextAreaElement ||
         ![
@@ -167,6 +168,11 @@ function AppContent() {
           "submit",
         ].includes(activeElement.type));
 
+    const isInputEditable =
+      isInputSelectable &&
+      !activeElement.readOnly &&
+      !activeElement.disabled;
+
     const htmlActive = activeElement as HTMLElement | null;
     const isContentEditableTarget = Boolean(
       htmlActive &&
@@ -179,8 +185,9 @@ function AppContent() {
       (isContentEditableTarget && hasDocumentSelection);
     const canCopy = hasInputSelection || hasDocumentSelection;
     const canPaste = isInputEditable || isContentEditableTarget;
+    const canSelectAll = isInputSelectable || isContentEditableTarget;
 
-    return { canCut, canCopy, canPaste };
+    return { canCut, canCopy, canPaste, canSelectAll };
   }, []);
 
   useEffect(() => {
@@ -189,7 +196,8 @@ function AppContent() {
       setClipboardCapabilities((prev) =>
         prev.canCut === next.canCut &&
         prev.canCopy === next.canCopy &&
-        prev.canPaste === next.canPaste
+        prev.canPaste === next.canPaste &&
+        prev.canSelectAll === next.canSelectAll
           ? prev
           : next,
       );
@@ -212,16 +220,19 @@ function AppContent() {
     };
   }, [computeClipboardCapabilities]);
 
-  const runEditCommand = useCallback((command: "cut" | "copy" | "paste") => {
-    const activeElement = document.activeElement as HTMLElement | null;
-    activeElement?.focus();
+  const runEditCommand = useCallback(
+    (command: "cut" | "copy" | "paste" | "selectAll") => {
+      const activeElement = document.activeElement as HTMLElement | null;
+      activeElement?.focus();
 
-    try {
-      document.execCommand(command);
-    } catch (error) {
-      console.error(`Failed to run ${command}:`, error);
-    }
-  }, []);
+      try {
+        document.execCommand(command);
+      } catch (error) {
+        console.error(`Failed to run ${command}:`, error);
+      }
+    },
+    [],
+  );
 
   const menuEnabledActions = useMemo(() => {
     const hasNotesFolder = Boolean(notesFolder);
@@ -267,6 +278,7 @@ function AppContent() {
       "edit-cut": clipboardCapabilities.canCut,
       "edit-copy": clipboardCapabilities.canCopy,
       "edit-paste": clipboardCapabilities.canPaste,
+      "edit-select-all": clipboardCapabilities.canSelectAll,
     };
   }, [
     clipboardCapabilities,
@@ -468,6 +480,10 @@ function AppContent() {
         }
         case "edit-paste": {
           runEditCommand("paste");
+          return;
+        }
+        case "edit-select-all": {
+          runEditCommand("selectAll");
           return;
         }
         case "zoom-in": {
