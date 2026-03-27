@@ -34,12 +34,19 @@ export interface UiWindowPosition {
   coordinateSpace: "logical";
 }
 
+export interface UiWindowSize {
+  width: number;
+  height: number;
+  coordinateSpace: "logical";
+}
+
 export interface UiState {
   schemaVersion?: number;
   selectedNoteId?: string | null;
   sidebarVisible?: boolean;
   focusMode?: boolean;
   windowPosition?: UiWindowPosition;
+  windowSize?: UiWindowSize;
 }
 
 // Per-folder settings (stored in .scratch/settings.json)

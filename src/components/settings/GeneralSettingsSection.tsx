@@ -386,7 +386,7 @@ export function GeneralSettingsSection() {
               <h2 className="text-xl font-medium">Restore Session</h2>
             </div>
             <p className="text-sm text-text-muted max-w-lg">
-              Restore your previous note, sidebar visibility, focus mode, and window position when restarting Scratch.
+              Restore your previous note, sidebar visibility, focus mode, and window size/position when restarting Scratch. Hold Ctrl/Cmd during launch to skip restore once.
             </p>
           </div>
           <RestoreUiStateToggle />
