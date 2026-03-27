@@ -107,8 +107,10 @@ export function CommandPalette({
   const [availableAiProviders, setAvailableAiProviders] = useState<
     AiProvider[]
   >([]);
+  const [noteBrowserPath, setNoteBrowserPath] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const isBrowsingNotes = noteBrowserPath !== null;
 
   // Load settings when palette opens or current note changes
   useEffect(() => {
@@ -164,6 +166,16 @@ export function CommandPalette({
         action: () => {
           onClose();
           window.dispatchEvent(new CustomEvent("create-new-folder"));
+        },
+      },
+      {
+        id: "open-note",
+        label: "Open Note",
+        icon: <FolderIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
+        action: () => {
+          setNoteBrowserPath("");
+          setQuery("");
+          setSelectedIndex(0);
         },
       },
     ];
@@ -530,7 +542,7 @@ export function CommandPalette({
 
   // Debounced search using Tantivy (local state, doesn't affect sidebar)
   useEffect(() => {
-    if (!open) return;
+    if (!open || isBrowsingNotes) return;
 
     const trimmed = query.trim();
     if (!trimmed) {
@@ -557,29 +569,151 @@ export function CommandPalette({
     }, 150);
 
     return () => clearTimeout(timer);
-  }, [query, open]);
+  }, [query, open, isBrowsingNotes]);
 
-  // Clear local search when palette closes
+  // Clear local search when palette closes or when browsing folders
   useEffect(() => {
-    if (!open) {
+    if (!open || isBrowsingNotes) {
       setLocalSearchResults([]);
     }
-  }, [open]);
+  }, [open, isBrowsingNotes]);
+
+  const noteBrowserEntries = useMemo(() => {
+    if (!isBrowsingNotes) {
+      return {
+        folderPaths: [] as string[],
+        notesInFolder: [] as {
+          id: string;
+          title: string;
+          preview: string;
+          modified: number;
+        }[],
+      };
+    }
+
+    const currentPath = noteBrowserPath ?? "";
+    const folders = new Set<string>();
+    const notesInFolder: {
+      id: string;
+      title: string;
+      preview: string;
+      modified: number;
+    }[] = [];
+
+    for (const note of notes) {
+      const relativePath = currentPath
+        ? note.id.startsWith(`${currentPath}/`)
+          ? note.id.substring(currentPath.length + 1)
+          : null
+        : note.id;
+
+      if (!relativePath) continue;
+
+      const slashIndex = relativePath.indexOf("/");
+      if (slashIndex === -1) {
+        notesInFolder.push(note);
+        continue;
+      }
+
+      const childFolderName = relativePath.substring(0, slashIndex);
+      const childFolderPath = currentPath
+        ? `${currentPath}/${childFolderName}`
+        : childFolderName;
+      folders.add(childFolderPath);
+    }
+
+    const folderPaths = Array.from(folders).sort((a, b) => a.localeCompare(b));
+    notesInFolder.sort((a, b) =>
+      cleanTitle(a.title).localeCompare(cleanTitle(b.title)),
+    );
+
+    return { folderPaths, notesInFolder };
+  }, [isBrowsingNotes, noteBrowserPath, notes]);
 
   // Use search results when searching, otherwise show all notes
   const filteredNotes = useMemo(() => {
+    if (isBrowsingNotes) {
+      const queryLower = query.trim().toLowerCase();
+      if (!queryLower) {
+        return noteBrowserEntries.notesInFolder;
+      }
+
+      return noteBrowserEntries.notesInFolder.filter((note) =>
+        cleanTitle(note.title).toLowerCase().includes(queryLower),
+      );
+    }
+
     if (!query.trim()) return notes;
     return localSearchResults;
-  }, [query, notes, localSearchResults]);
+  }, [
+    isBrowsingNotes,
+    query,
+    noteBrowserEntries.notesInFolder,
+    notes,
+    localSearchResults,
+  ]);
 
   // Memoize filtered commands
   const filteredCommands = useMemo(() => {
+    if (isBrowsingNotes) {
+      const browseCommands: Command[] = [];
+
+      if (noteBrowserPath) {
+        const parentPath = noteBrowserPath.includes("/")
+          ? noteBrowserPath.substring(0, noteBrowserPath.lastIndexOf("/"))
+          : "";
+
+        browseCommands.push({
+          id: "open-note-parent",
+          label: "Go to Parent Folder",
+          icon: <FolderIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
+          action: () => {
+            setNoteBrowserPath(parentPath);
+            setQuery("");
+            setSelectedIndex(0);
+          },
+        });
+      }
+
+      const queryLower = query.trim().toLowerCase();
+      for (const folderPath of noteBrowserEntries.folderPaths) {
+        const folderName = folderPath.substring(folderPath.lastIndexOf("/") + 1);
+        if (queryLower && !folderName.toLowerCase().includes(queryLower)) {
+          continue;
+        }
+
+        browseCommands.push({
+          id: `open-note-folder-${folderPath}`,
+          label: `${folderName}/`,
+          icon: <FolderIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
+          action: () => {
+            setNoteBrowserPath(folderPath);
+            setQuery("");
+            setSelectedIndex(0);
+          },
+        });
+      }
+
+      return browseCommands;
+    }
+
     if (!query.trim()) return commands;
     const queryLower = query.toLowerCase();
     return commands.filter((cmd) =>
       cmd.label.toLowerCase().includes(queryLower),
     );
-  }, [query, commands]);
+  }, [
+    isBrowsingNotes,
+    noteBrowserPath,
+    noteBrowserEntries.folderPaths,
+    query,
+    commands,
+  ]);
+
+  const visibleNotes = useMemo(
+    () => (isBrowsingNotes ? filteredNotes : filteredNotes.slice(0, 10)),
+    [isBrowsingNotes, filteredNotes],
+  );
 
   // Memoize all items (commands first, then notes)
   const allItems = useMemo(
@@ -592,7 +726,7 @@ export function CommandPalette({
         icon: cmd.icon,
         action: cmd.action,
       })),
-      ...filteredNotes.slice(0, 10).map((note) => ({
+      ...visibleNotes.map((note) => ({
         type: "note" as const,
         id: note.id,
         label: cleanTitle(note.title),
@@ -603,12 +737,13 @@ export function CommandPalette({
         },
       })),
     ],
-    [filteredNotes, filteredCommands, selectNote, onClose],
+    [visibleNotes, filteredCommands, selectNote, onClose],
   );
 
   // Reset state when opened
   useEffect(() => {
     if (open) {
+      setNoteBrowserPath(null);
       setQuery("");
       setSelectedIndex(0);
       setTimeout(() => inputRef.current?.focus(), 50);
@@ -618,7 +753,7 @@ export function CommandPalette({
   // Reset selection when items change
   useEffect(() => {
     setSelectedIndex(0);
-  }, [query]);
+  }, [query, noteBrowserPath]);
 
   // Scroll selected item into view
   useEffect(() => {
@@ -667,11 +802,17 @@ export function CommandPalette({
         case "Escape":
           e.preventDefault();
           e.stopPropagation();
+          if (isBrowsingNotes) {
+            setNoteBrowserPath(null);
+            setQuery("");
+            setSelectedIndex(0);
+            break;
+          }
           onClose();
           break;
       }
     },
-    [allItems, selectedIndex, onClose],
+    [allItems, selectedIndex, onClose, isBrowsingNotes],
   );
 
   if (!open) return null;
@@ -690,7 +831,11 @@ export function CommandPalette({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search notes or type a command..."
+            placeholder={
+              isBrowsingNotes
+                ? "Browse folders and notes..."
+                : "Search notes or type a command..."
+            }
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
@@ -703,15 +848,25 @@ export function CommandPalette({
         <div ref={listRef} className="overflow-y-auto h-full p-2.5 flex-1">
           {allItems.length === 0 ? (
             <div className="text-sm font-medium opacity-50 text-text-muted p-2">
-              No results found
+              {isBrowsingNotes
+                ? query.trim()
+                  ? "No matches in this folder"
+                  : "No notes in this folder"
+                : "No results found"}
             </div>
           ) : (
             <>
+              {isBrowsingNotes && (
+                <div className="text-sm font-medium text-text-muted px-2.5 py-1.5">
+                  {noteBrowserPath ? `Path: /${noteBrowserPath}` : "Path: /"}
+                </div>
+              )}
+
               {/* Commands section */}
               {filteredCommands.length > 0 && (
                 <div className="space-y-0.5 mb-5">
                   <div className="text-sm font-medium text-text-muted px-2.5 py-1.5">
-                    Commands
+                    {isBrowsingNotes ? "Folders" : "Commands"}
                   </div>
                   {filteredCommands.map((cmd, i) => {
                     return (
@@ -730,12 +885,12 @@ export function CommandPalette({
               )}
 
               {/* Notes section */}
-              {filteredNotes.length > 0 && (
+              {visibleNotes.length > 0 && (
                 <div className="space-y-0.5">
                   <div className="text-sm font-medium text-text-muted px-2.5 py-1.5">
                     Notes
                   </div>
-                  {filteredNotes.slice(0, 10).map((note, i) => {
+                  {visibleNotes.map((note, i) => {
                     const title = cleanTitle(note.title);
                     const firstLetter = title.charAt(0).toUpperCase();
                     // Clean subtitle: treat whitespace-only or &nbsp; as empty
