@@ -127,6 +127,25 @@ impl Default for WindowPositionState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WindowSizeState {
+    pub width: f64,
+    pub height: f64,
+    #[serde(default = "default_window_coordinate_space")]
+    pub coordinate_space: String,
+}
+
+impl Default for WindowSizeState {
+    fn default() -> Self {
+        Self {
+            width: 0.0,
+            height: 0.0,
+            coordinate_space: default_window_coordinate_space(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UiStateSnapshot {
     #[serde(default = "default_ui_state_schema_version")]
     pub schema_version: u8,
@@ -134,6 +153,7 @@ pub struct UiStateSnapshot {
     pub sidebar_visible: Option<bool>,
     pub focus_mode: Option<bool>,
     pub window_position: Option<WindowPositionState>,
+    pub window_size: Option<WindowSizeState>,
 }
 
 impl Default for UiStateSnapshot {
@@ -144,6 +164,7 @@ impl Default for UiStateSnapshot {
             sidebar_visible: None,
             focus_mode: None,
             window_position: None,
+            window_size: None,
         }
     }
 }
@@ -387,6 +408,7 @@ pub struct AppState {
     pub file_watcher: Mutex<Option<FileWatcherState>>,
     pub search_index: Mutex<Option<SearchIndex>>,
     pub debounce_map: Arc<Mutex<HashMap<PathBuf, Instant>>>,
+    pub skip_ui_restore_on_startup: bool,
     #[cfg(target_os = "macos")]
     pub menu_enabled_actions: Mutex<HashMap<String, HashMap<String, bool>>>,
 }
@@ -400,6 +422,7 @@ impl Default for AppState {
             file_watcher: Mutex::new(None),
             search_index: Mutex::new(None),
             debounce_map: Arc::new(Mutex::new(HashMap::new())),
+            skip_ui_restore_on_startup: false,
             #[cfg(target_os = "macos")]
             menu_enabled_actions: Mutex::new(HashMap::new()),
         }
@@ -780,6 +803,29 @@ fn save_settings(notes_folder: &str, settings: &Settings) -> Result<()> {
     Ok(())
 }
 
+fn should_skip_ui_restore_on_startup() -> bool {
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    {
+        use device_query::{DeviceQuery, DeviceState, Keycode};
+
+        std::panic::catch_unwind(|| {
+            let keys = DeviceState::new().get_keys();
+            keys.contains(&Keycode::LControl)
+                || keys.contains(&Keycode::RControl)
+                || keys.contains(&Keycode::Command)
+                || keys.contains(&Keycode::RCommand)
+                || keys.contains(&Keycode::LMeta)
+                || keys.contains(&Keycode::RMeta)
+        })
+        .unwrap_or(false)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        false
+    }
+}
+
 fn capture_main_window_position(app: &AppHandle) -> Option<WindowPositionState> {
     let window = app.get_webview_window("main")?;
     let position = window.outer_position().ok()?;
@@ -796,44 +842,82 @@ fn capture_main_window_position(app: &AppHandle) -> Option<WindowPositionState> 
     })
 }
 
-fn restore_main_window_position(app: &AppHandle) {
-    let saved_position = {
-        let state = app.state::<AppState>();
-        let settings = state.settings.read().expect("settings read lock");
+fn capture_main_window_size(app: &AppHandle) -> Option<WindowSizeState> {
+    let window = app.get_webview_window("main")?;
+    let size = window.outer_size().ok()?;
+    let scale_factor = window.scale_factor().ok()?;
 
+    if !scale_factor.is_finite() || scale_factor <= 0.0 {
+        return None;
+    }
+
+    Some(WindowSizeState {
+        width: size.width as f64 / scale_factor,
+        height: size.height as f64 / scale_factor,
+        coordinate_space: default_window_coordinate_space(),
+    })
+}
+
+fn restore_main_window_geometry(app: &AppHandle) {
+    let (saved_position, saved_size) = {
+        let state = app.state::<AppState>();
+        if state.skip_ui_restore_on_startup {
+            return;
+        }
+
+        let settings = state.settings.read().expect("settings read lock");
         if settings.restore_ui_state != Some(true) {
             return;
         }
 
-        settings
+        let saved_position = settings
             .ui_state
             .as_ref()
-            .and_then(|ui_state| ui_state.window_position.clone())
-    };
+            .and_then(|ui_state| ui_state.window_position.clone());
+        let saved_size = settings
+            .ui_state
+            .as_ref()
+            .and_then(|ui_state| ui_state.window_size.clone());
 
-    let Some(saved_position) = saved_position else {
-        return;
+        (saved_position, saved_size)
     };
-
-    if saved_position.coordinate_space != "logical"
-        || !saved_position.x.is_finite()
-        || !saved_position.y.is_finite()
-    {
-        return;
-    }
 
     if let Some(window) = app.get_webview_window("main") {
-        let logical = tauri::LogicalPosition::new(saved_position.x, saved_position.y);
-        if let Err(err) = window.set_position(tauri::Position::Logical(logical)) {
-            eprintln!("Failed to restore window position: {}", err);
+        if let Some(saved_size) = saved_size {
+            if saved_size.coordinate_space == "logical"
+                && saved_size.width.is_finite()
+                && saved_size.height.is_finite()
+                && saved_size.width > 0.0
+                && saved_size.height > 0.0
+            {
+                let logical = tauri::LogicalSize::new(saved_size.width, saved_size.height);
+                if let Err(err) = window.set_size(tauri::Size::Logical(logical)) {
+                    eprintln!("Failed to restore window size: {}", err);
+                }
+            }
+        }
+
+        if let Some(saved_position) = saved_position {
+            if saved_position.coordinate_space == "logical"
+                && saved_position.x.is_finite()
+                && saved_position.y.is_finite()
+            {
+                let logical = tauri::LogicalPosition::new(saved_position.x, saved_position.y);
+                if let Err(err) = window.set_position(tauri::Position::Logical(logical)) {
+                    eprintln!("Failed to restore window position: {}", err);
+                }
+            }
         }
     }
 }
 
-fn persist_main_window_position(app: &AppHandle) {
-    let Some(position) = capture_main_window_position(app) else {
+fn persist_main_window_geometry(app: &AppHandle) {
+    let window_position = capture_main_window_position(app);
+    let window_size = capture_main_window_size(app);
+
+    if window_position.is_none() && window_size.is_none() {
         return;
-    };
+    }
 
     let state = app.state::<AppState>();
 
@@ -854,7 +938,14 @@ fn persist_main_window_position(app: &AppHandle) {
 
         let ui_state = settings.ui_state.get_or_insert_with(UiStateSnapshot::default);
         ui_state.schema_version = default_ui_state_schema_version();
-        ui_state.window_position = Some(position);
+
+        if let Some(position) = window_position {
+            ui_state.window_position = Some(position);
+        }
+
+        if let Some(size) = window_size {
+            ui_state.window_size = Some(size);
+        }
     }
 
     let settings = state.settings.read().expect("settings read lock");
@@ -1830,6 +1921,11 @@ fn update_settings(
 }
 
 #[tauri::command]
+fn should_restore_ui_state_on_launch(state: State<AppState>) -> bool {
+    !state.skip_ui_restore_on_startup
+}
+
+#[tauri::command]
 fn update_ui_state(
     selected_note_id: Option<String>,
     sidebar_visible: bool,
@@ -1850,6 +1946,7 @@ fn update_ui_state(
     };
 
     let window_position = capture_main_window_position(&app);
+    let window_size = capture_main_window_size(&app);
 
     {
         let mut settings = state.settings.write().expect("settings write lock");
@@ -1865,6 +1962,9 @@ fn update_ui_state(
         ui_state.focus_mode = Some(focus_mode);
         if let Some(position) = window_position {
             ui_state.window_position = Some(position);
+        }
+        if let Some(size) = window_size {
+            ui_state.window_size = Some(size);
         }
     }
 
@@ -4322,6 +4422,8 @@ pub fn run() {
                 None
             };
 
+            let skip_ui_restore_on_startup = should_skip_ui_restore_on_startup();
+
             let state = AppState {
                 app_config: RwLock::new(app_config),
                 settings: RwLock::new(settings),
@@ -4329,11 +4431,13 @@ pub fn run() {
                 file_watcher: Mutex::new(None),
                 search_index: Mutex::new(search_index),
                 debounce_map: Arc::new(Mutex::new(HashMap::new())),
+                skip_ui_restore_on_startup,
                 #[cfg(target_os = "macos")]
                 menu_enabled_actions: Mutex::new(HashMap::new()),
             };
             app.manage(state);
 
+            // Restore window size/position from per-folder settings when enabled.
             #[cfg(target_os = "macos")]
             {
                 let app_state = app.state::<AppState>();
@@ -4342,7 +4446,7 @@ pub fn run() {
 
             // Restore window position from per-folder settings when enabled.
             // Failures are ignored so startup always falls back to default behavior.
-            restore_main_window_position(app.handle());
+            restore_main_window_geometry(app.handle());
 
             // Add notes folder to asset protocol scope so images can be served
             if let Some(ref folder) = app.state::<AppState>().app_config.read().expect("app_config read lock").notes_folder.clone() {
@@ -4390,7 +4494,7 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Persist final window position on app quit when UI state restore is enabled.
+            // Persist final window geometry on app quit when UI state restore is enabled.
             if window.label() == "main"
                 && matches!(
                     event,
@@ -4398,7 +4502,7 @@ pub fn run() {
                 )
             {
                 let app = window.app_handle();
-                persist_main_window_position(&app);
+                persist_main_window_geometry(&app);
             }
 
             // Handle drag-and-drop of .md files onto any window
@@ -4440,6 +4544,7 @@ pub fn run() {
             move_folder,
             get_settings,
             update_settings,
+            should_restore_ui_state_on_launch,
             update_ui_state,
             update_git_enabled,
             preview_note_name,
