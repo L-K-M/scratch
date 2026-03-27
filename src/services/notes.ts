@@ -86,6 +86,10 @@ export async function updateUiState(
   });
 }
 
+export async function shouldRestoreUiStateOnLaunch(): Promise<boolean> {
+  return invoke("should_restore_ui_state_on_launch");
+}
+
 export async function updateGitEnabled(
   enabled: boolean,
   expectedFolder: string,

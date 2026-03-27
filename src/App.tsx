@@ -133,10 +133,14 @@ function AppContent() {
         const settings = await notesService.getSettings();
         if (cancelled) return;
 
+        const shouldRestoreOnLaunch =
+          await notesService.shouldRestoreUiStateOnLaunch();
+        if (cancelled) return;
+
         const enabled = settings.restoreUiState === true;
         setRestoreUiStateEnabled(enabled);
 
-        if (!enabled || !settings.uiState) return;
+        if (!shouldRestoreOnLaunch || !enabled || !settings.uiState) return;
 
         if (typeof settings.uiState.sidebarVisible === "boolean") {
           setSidebarVisible(settings.uiState.sidebarVisible);
