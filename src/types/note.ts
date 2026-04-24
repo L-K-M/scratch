@@ -103,8 +103,6 @@ export interface Settings {
   ignoredPatterns?: string[];
   customColorsLight?: CustomColors;
   customColorsDark?: CustomColors;
-  restoreUiState?: boolean;
-  uiState?: UiState;
 }
 
 export interface FolderNode {
