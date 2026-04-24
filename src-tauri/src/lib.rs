@@ -209,6 +209,10 @@ pub struct Settings {
     pub custom_colors_light: Option<std::collections::HashMap<String, String>>,
     #[serde(rename = "customColorsDark")]
     pub custom_colors_dark: Option<std::collections::HashMap<String, String>>,
+    #[serde(rename = "restoreUiState")]
+    pub restore_ui_state: Option<bool>,
+    #[serde(rename = "uiState")]
+    pub ui_state: Option<UiStateSnapshot>,
 }
 
 // Search result
@@ -4526,6 +4530,17 @@ pub fn run() {
                 let app_state = app.state::<AppState>();
                 apply_macos_menu_enabled_state(app.handle(), &app_state);
             }
+
+            // Restore window size/position from per-folder settings when enabled.
+            #[cfg(target_os = "macos")]
+            {
+                let app_state = app.state::<AppState>();
+                apply_macos_menu_enabled_state(app.handle(), &app_state);
+            }
+
+            // Restore window position from per-folder settings when enabled.
+            // Failures are ignored so startup always falls back to default behavior.
+            restore_main_window_geometry(app.handle());
 
             // Add notes folder to asset protocol scope so images can be served
             if let Some(ref folder) = app.state::<AppState>().app_config.read().expect("app_config read lock").notes_folder.clone() {

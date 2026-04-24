@@ -923,6 +923,78 @@ function IgnoredFoldersEditor() {
   );
 }
 
+function RestoreUiStateToggle() {
+  const [restoreUiState, setRestoreUiState] = useState<boolean | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  useEffect(() => {
+    invoke<Settings>("get_settings")
+      .then((settings) => {
+        setRestoreUiState(settings.restoreUiState === true);
+      })
+      .catch((error) => {
+        console.error("Failed to load UI restore setting:", error);
+        setRestoreUiState(false);
+      });
+  }, []);
+
+  const handleToggle = async (enabled: boolean) => {
+    if (isUpdating || restoreUiState === enabled) return;
+
+    setIsUpdating(true);
+    try {
+      const settings = await invoke<Settings>("get_settings");
+      await invoke("update_settings", {
+        newSettings: { ...settings, restoreUiState: enabled },
+      });
+      setRestoreUiState(enabled);
+      window.dispatchEvent(
+        new CustomEvent<boolean>("ui-state-restore-setting-changed", {
+          detail: enabled,
+        }),
+      );
+    } catch {
+      toast.error("Failed to update UI restore setting");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  if (restoreUiState === null) {
+    return (
+      <div className="flex gap-1 p-1 rounded-[10px] border border-border shrink-0">
+        <Button variant="ghost" size="xs" disabled>
+          Off
+        </Button>
+        <Button variant="ghost" size="xs" disabled>
+          On
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex gap-1 p-1 rounded-[10px] border border-border shrink-0">
+      <Button
+        onClick={() => handleToggle(false)}
+        variant={!restoreUiState ? "primary" : "ghost"}
+        size="xs"
+        disabled={isUpdating}
+      >
+        Off
+      </Button>
+      <Button
+        onClick={() => handleToggle(true)}
+        variant={restoreUiState ? "primary" : "ghost"}
+        size="xs"
+        disabled={isUpdating}
+      >
+        On
+      </Button>
+    </div>
+  );
+}
+
 function RemoteInstructions() {
   return (
     <div className="text-sm text-text-muted space-y-1.5 pt-2 pb-1.5">

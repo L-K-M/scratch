@@ -64,6 +64,27 @@ export type ThemeColorKey =
 // Partial map of color overrides (hex strings)
 export type CustomColors = Partial<Record<ThemeColorKey, string>>;
 
+export interface UiWindowPosition {
+  x: number;
+  y: number;
+  coordinateSpace: "logical";
+}
+
+export interface UiWindowSize {
+  width: number;
+  height: number;
+  coordinateSpace: "logical";
+}
+
+export interface UiState {
+  schemaVersion?: number;
+  selectedNoteId?: string | null;
+  sidebarVisible?: boolean;
+  focusMode?: boolean;
+  windowPosition?: UiWindowPosition;
+  windowSize?: UiWindowSize;
+}
+
 // Per-folder settings (stored in .scratch/settings.json)
 export interface Settings {
   theme: ThemeSettings;
@@ -82,6 +103,8 @@ export interface Settings {
   ignoredPatterns?: string[];
   customColorsLight?: CustomColors;
   customColorsDark?: CustomColors;
+  restoreUiState?: boolean;
+  uiState?: UiState;
 }
 
 export interface FolderNode {
