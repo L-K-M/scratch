@@ -50,6 +50,13 @@ brew install --cask erictli/tap/scratch
 2. Open the DMG and drag Scratch to Applications
 3. Open Scratch from Applications
 
+The build is unsigned and not notarized. If macOS refuses to open it, clear the
+quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Scratch.app"
+```
+
 ### Windows
 
 Download the latest `.exe` installer from [Releases](https://github.com/erictli/scratch/releases) and run it. WebView2 will be downloaded automatically if needed.
